@@ -1214,6 +1214,10 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   lookup_icon_from_names(names) {
+    // no icon theme to ask (Gnome 42 without a GTK display)
+    if (!this.icon_theme) {
+      return names[0] ?? null;
+    }
     for (let i = 0; i < names.length; i++) {
       if (this.icon_theme.lookup_icon(names[i], 16, 1)) {
         return names[i];

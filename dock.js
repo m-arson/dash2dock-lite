@@ -237,6 +237,9 @@ export let Dock = GObject.registerClass(
       let item = new DockItemContainer({
         appinfo_filename,
       });
+      // size like the Dash does for app icons; the 96px default overflows
+      // the item (Gnome 42 then allocates the icon no space to click)
+      item.child.icon.setIconSize(this.dash.iconSize);
       item.dock = this;
       item._menu._onActivate = () => {
         this._maybeBounce(item);

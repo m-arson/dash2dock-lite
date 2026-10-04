@@ -186,6 +186,25 @@ export const DockIcon = GObject.registerClass(
         return Clutter.EVENT_PROPAGATE;
       };
       this._draggable._grabActor = () => {};
+
+      // presses on the inner icon bubble up here; handle them on the whole
+      // item since the icon may be allocated no space (Gnome 42)
+      this.connectObject(
+        'button-press-event',
+        (actor, evt) => {
+          let container = this.get_parent();
+          if (evt.get_button() != 1) {
+            if (container._menu) {
+              container._menu.popup();
+            }
+          } else {
+            if (container._onClick) {
+              container._onClick();
+            }
+          }
+        },
+        this
+      );
     }
 
     _createIcon(size) {
@@ -218,18 +237,6 @@ export const DockIcon = GObject.registerClass(
             container.hideLabel();
           } catch (err) {
             console.log(err);
-          }
-        },
-        'button-press-event',
-        (actor, evt) => {
-          if (evt.get_button() != 1) {
-            if (container._menu) {
-              container._menu.popup();
-            }
-          } else {
-            if (container._onClick) {
-              container._onClick();
-            }
           }
         },
         this
