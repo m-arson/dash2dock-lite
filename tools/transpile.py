@@ -2,76 +2,71 @@ import sys
 import re
 
 from os import listdir, mkdir, makedirs
-from os.path import isdir, isfile, join, exists
+from os.path import isdir, isfile, join, exists, dirname, normpath
 from shutil import copyfile, copytree, rmtree
 from pprint import pprint
 
 imports = []
 
 def modifyMetadata():
-    o = open("./build/metadata.json", "w")
-    for l in open("./metadata.json", "r"):
-        if '"45"' in l:
-            l = '"42", "43", "44"\n'
-        o.write(l)
+    metadata = open("./metadata.json", "r").read()
+    metadata = re.sub(
+        r'"shell-version":\s*\[[^\]]*\]',
+        '"shell-version": ["42", "43", "44"]',
+        metadata,
+    )
+    open("./build/metadata.json", "w").write(metadata)
 
-importMap = [
-    [ "import * as Main", "const Main = imports.ui.main;"],
-    [ "import * as Fav", "const Fav = imports.ui.appFavorites;"],
-    [ "import * as PopupMenu", "const PopupMenu = imports.ui.popupMenu;"],
-    [ "import * as BoxPointer", "const BoxPointer = imports.ui.boxpointer;"],
-    # [ "", "const Layout = imports.ui.layout;"],
-    [ "import { BaseIcon } from", "const BaseIcon = imports.ui.iconGrid;"],
-    [ "import { Dash } from", "const Dash = imports.ui.dash.Dash;" ],
-    [ "import { ShowAppsIcon }", "const ShowAppsIcon = imports.ui.dash.ShowAppsIcon;" ],
-    [ "import GLib", "const GLib = imports.gi.GLib;" ],
-    [ "import Gio", "const Gio = imports.gi.Gio;" ],
-    [ "import GioUnix", "" ],
-    [ "const DesktopAppInfo", "const DesktopAppInfo = GioUnix.DesktopAppInfo;" ],
-    [ "import GObject", "const GObject = imports.gi.GObject;" ],
-    [ "import Clutter", "const Clutter = imports.gi.Clutter;" ],
-    [ "import Graphene", "const Graphene = imports.gi.Graphene;" ],
-    [ "import St", "const St = imports.gi.St;" ],
-    [ "import PangoCairo", "const PangoCairo = imports.gi.PangoCairo;" ],
-    [ "import Pango", "const Pango = imports.gi.Pango;" ],
-    [ "import Meta", "const Meta = imports.gi.Meta;" ],
-    [ "import Shell", "const Shell = imports.gi.Shell;" ],
-    [ "import Gtk", "const Gtk = imports.gi.Gtk;" ],
-    [ "import Gdk", "const Gdk = imports.gi.Gdk;" ],
-    [ "import Adw", "const Adw = imports.gi.Adw;" ],
-    [ "import Cairo", "const Cairo = imports.cairo;" ],
-    # [ "", "const Point = Graphene.Point;" ],
-    [ "from './vector.js", "const Vector = Me.imports.vector.Vector;" ],
-    [ "from './animator.js", "const Animator = Me.imports.animator.Animator;" ],
-    [ "from './autohide.js", "const AutoHide = Me.imports.autohide.AutoHide;" ],
-    [ "import { MonitorsConfig }", "const MonitorsConfig = Me.imports.monitors.MonitorsConfig;" ],
-    [ "import { Timer }", "const Timer = Me.imports.timer.Timer;" ],
-    [ "import { Style }", "const Style = Me.imports.style.Style;" ],
-    [ "import { Dock }", "const Dock = Me.imports.dock.Dock;" ],
-    [ "import { DockPosition }", "const DockPosition = {BOTTOM: 'bottom',LEFT: 'left',RIGHT: 'right',TOP: 'top'};" ],
-    [ "import { Services }", "const Services = Me.imports.services.Services;" ],
-    [ "import { runTests }", "const runTests = Me.imports.diagnostics.runTests;" ],
-    [ "import { schemaId, SettingsKeys }", "const { schemaId, settingsKeys, SettingsKeys } = Me.imports.preferences.keys;" ],
-    [ "import { Bounce, Linear }", "const { Bounce, Linear } = Me.imports.effects.easing;" ],
-    [ "import { MonochromeEffect }", "const MonochromeEffect = Me.imports.effects.monochrome_effect.MonochromeEffect;" ],
-    [ "import { BlurEffect }", "const BlurEffect = Me.imports.effects.blur_effect.BlurEffect;" ],
-    [ "import { TintEffect }", "const TintEffect = Me.imports.effects.tint_effect.TintEffect;" ],
-    [ "import { Clock }", "const Clock = Me.imports.apps.clock.Clock;" ],
-    [ "import { Calendar }", "const Calendar = Me.imports.apps.calendar.Calendar;" ],
-    [ "import { Dot }", "const Dot = Me.imports.apps.dot.Dot;" ],
-    [ "import { PrefKeys }", "let { PrefKeys } = Me.imports.preferences.prefKeys;" ],
-    [ "import { getPointer, warpPointer }", "const { getPointer, warpPointer } = Me.imports.utils;" ],
-    [ "import {get_distance_sqr,get_distance,isInRect,isOverlapRect", "const { get_distance_sqr, get_distance, isInRect, isOverlapRect } = Me.imports.utils;" ],
-    [ "import {DashIcon,DashItemContainer", "const { DashIcon, DashItemContainer } = imports.ui.dash;" ],
-    [ "from '../drawing.js'", "const Drawing = Me.imports.drawing.Drawing;" ],
-    [ "from './dockItems.js'", "const { DockItemDotsOverlay, DockItemBadgeOverlay, DockItemContainer, DockBackground } = Me.imports.dockItems;" ],
-    [ "from './dockItemMenu.js'", "const { DockItemList } = Me.imports.dockItemMenu;" ],
-    [ "import {ExtensionPreferences", "class ExtensionPreferences {}" ],
-    [ "import {Extension", "class Extension {}" ],
-    # [ "import { trySpawnCommandLine }", "const trySpawnCommandLine = () => {};" ],
-    # [ "import { trySpawnCommandLine }", "const { trySpawnCommandLine } = imports.misc.util;" ],
-    [ "import { trySpawnCommandLine }", "const { trySpawnCommandLine } = Me.imports.utils;" ],
-]
+def moduleExpr(source, f):
+    """Legacy imports expression for an ES module source"""
+    gi = re.match(r"gi://([A-Za-z0-9]+)(\?version=(.+))?$", source)
+    if gi:
+        name = gi.group(1)
+        if name == "cairo":
+            return "imports.cairo"
+        if gi.group(3):
+            return f"(imports.gi.versions.{name} = '{gi.group(3)}', imports.gi.{name})"
+        return f"imports.gi.{name}"
+
+    shell = re.match(r"resource:///org/gnome/shell/((ui|misc)/.+)\.js$", source)
+    if shell:
+        return "imports." + shell.group(1).replace("/", ".")
+
+    if source.startswith("."):
+        # resolve relative to the importing file, within the extension
+        path = normpath(join(dirname(f), source))
+        return "Me.imports." + path[: -len(".js")].replace("/", ".")
+
+    return None
+
+def convertImport(statement, f):
+    m = re.match(r"import\s*(.*?)\s*from\s*'([^']+)';?$", statement)
+    if not m:
+        return statement
+    spec, source = m.group(1), m.group(2)
+
+    # base classes provided by gnome-shell 45+; legacy init() is in tools/imports_*.js
+    if source.endswith("/extensions/extension.js"):
+        return "class Extension {}"
+    if source.endswith("/extensions/prefs.js"):
+        return "class ExtensionPreferences {}"
+    # dock.js and animator.js import each other; inline the constants
+    if re.match(r"\{\s*DockPosition\s*\}$", spec):
+        return "const DockPosition = {BOTTOM: 'bottom',LEFT: 'left',RIGHT: 'right',TOP: 'top'};"
+    if source == "gi://GioUnix":
+        return ""
+
+    expr = moduleExpr(source, f)
+    if expr is None:
+        return statement
+
+    if spec.startswith("{"):
+        names = [n.strip() for n in spec.strip("{} ").split(",") if n.strip()]
+        names = [re.sub(r"^(\w+)\s+as\s+(\w+)$", r"\1: \2", n) for n in names]
+        return f"const {{ {', '.join(names)} }} = {expr};"
+
+    name = re.sub(r"^\*\s*as\s+", "", spec)
+    return f"const {name} = {expr};"
 
 def dump(f):
     if not f.endswith(".js"):
@@ -84,7 +79,7 @@ def dump(f):
         return
     f = f.strip()
     of = f.replace("./", "./build/")
-    
+
     output = open(of, "w")
 
     output.write("const ExtensionUtils = imports.misc.extensionUtils;\n")
@@ -108,24 +103,8 @@ def dump(f):
         if l.startswith("export default"):
             l = l.replace("export default", "")
         if l.startswith("export "):
-            if "const schemaId" in l:
-                l = l.replace("const schemaId", "var schemaId");
-            if "class {" in l:
-                l = l.replace("const ", "var ")
-                l = l.replace("let ", "var ")
-            if "registerClass" in l:
-                l = l.replace("const ", "var ");
-                l = l.replace("let ", "var ");
-            if ") => {" in l:
-                l = l.replace("const ", "var ");
-                l = l.replace("let ", "var ");
-            if "= {" in l:
-                l = l.replace("const ", "var ");
-                l = l.replace("let ", "var ");
-            if "= function" in l:
-                l = l.replace("const ", "var ");
-                l = l.replace("let ", "var ");
-
+            # only var declarations are visible to legacy Me.imports
+            l = re.sub(r"^export (const|let) ", "var ", l)
             l = l.replace("export ", "")
 
         if commentOut:
@@ -135,16 +114,8 @@ def dump(f):
             output.write(l);
 
         if inImport and "from" in l:
-            handled = False
-            for m in importMap:
-                if m[0] in importLine:
-                    output.write(m[1])
-                    output.write("\n")
-                    handled = True
-                    break
-
-            if not handled:
-                output.write(importLine)
+            output.write(convertImport(importLine, f))
+            output.write("\n")
 
             inImport = False
             importLine = ""
