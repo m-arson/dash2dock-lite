@@ -87,6 +87,18 @@ export const isInRect = (r, p, pad) => {
   return px + pad >= x1 && px - pad < x2 && py + pad >= y1 && py - pad < y2;
 };
 
+/**
+ * Return the first command line whose program is installed
+ * @param {string[]} candidates command lines, most preferred first
+ * @returns {string}
+ */
+export const firstInstalledCommand = (candidates) => {
+  return (
+    candidates.find((cmd) => GLib.find_program_in_path(cmd.split(' ')[0])) ??
+    candidates[0]
+  );
+};
+
 export const trySpawnCommandLine = function (cmd) {
   return new Promise((resolve, reject) => {
     try {

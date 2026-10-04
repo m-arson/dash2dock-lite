@@ -1,7 +1,11 @@
 'use strict';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import { tempPath, trySpawnCommandLine } from './utils.js';
+import {
+  tempPath,
+  trySpawnCommandLine,
+  firstInstalledCommand,
+} from './utils.js';
 // import { trySpawnCommandLine } from 'resource:///org/gnome/shell/misc/util.js';
 
 import Gio from 'gi://Gio';
@@ -124,11 +128,13 @@ export const Services = class {
 
   disable() {
     this._downloadsMonitor.disconnectObject(this);
+    this._downloadsMonitor.cancel();
     this._downloadsMonitor = null;
     this._services = [];
     this._volumeMonitor.disconnectObject(this);
     this._volumeMonitor = null;
     this._trashMonitor.disconnectObject(this);
+    this._trashMonitor.cancel();
     this._trashMonitor = null;
     this._trashDir = null;
   }
@@ -136,6 +142,7 @@ export const Services = class {
   setupDownloads() {
     if (this._downloadsMonitor) {
       this._downloadsMonitor.disconnectObject(this);
+      this._downloadsMonitor.cancel();
       this._downloadsMonitor = null;
     }
     this._downloadsUserDir = this.extension.downloads_path;
@@ -147,8 +154,15 @@ export const Services = class {
       this._downloadsDir = Gio.File.new_for_path(this._downloadsUserDir);
     } else {
       // fallback
-      this._downloadsDir = Gio.File.new_for_path('Downloads');
+      this._downloadsDir = this._defaultDownloadsDir();
     }
+    // keep the downloads item pointing at the folder being listed
+    this.setupFolderIcon(
+      'downloads',
+      'Downloads',
+      'folder-downloads',
+      this._downloadsDir.get_path()
+    );
 
     this._downloadsMonitor = this._downloadsDir.monitor(
       Gio.FileMonitorFlags.WATCH_MOVES,
@@ -187,19 +201,13 @@ export const Services = class {
     }
 
     this.last_mounted = mount;
-    let basename = this._getMountName(mount); // mount.get_default_location().get_basename();
-    // let appname = `mount-${this._toSafeFileName(basename)}-dash2dock-lite.desktop`;
     this.setupMountIcon(mount);
     this.extension.animate();
     return true;
   }
 
   _onMountRemoved(monitor, mount) {
-    let basename = this._getMountName(mount); //mount.get_default_location().get_basename();
-    let appname = `mount-${this._toSafeFileName(
-      basename
-    )}-dash2dock-lite.desktop`;
-    let mount_id = tempPath(appname);
+    let mount_id = tempPath(`${this._mountAppName(mount)}.desktop`);
     delete this._mounts[mount_id];
     this.extension.animate();
   }
@@ -215,7 +223,8 @@ export const Services = class {
     let appname = `trash-dash2dock-lite.desktop`;
     let app_id = tempPath(appname);
     let fn = Gio.File.new_for_path(app_id);
-    let open_app = 'nautilus --select';
+    // the program must exist or Gio refuses to load the desktop file
+    let open_app = this.extension.file_explorer();
 
     let trash_action = `${extension_path}/apps/empty-trash.sh`;
     {
@@ -240,10 +249,10 @@ export const Services = class {
     let appname = `${name}-dash2dock-lite.desktop`;
     let app_id = tempPath(appname);
     let fn = Gio.File.new_for_path(app_id);
-    // let open_app = 'xdg-open';
-    let open_app = 'nautilus --select';
+    // the program must exist or Gio refuses to load the desktop file
+    let open_app = this.extension.file_explorer();
 
-    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${title}\nExec=${open_app} ${full_path}\nIcon=${icon}\nStartupWMClass=${name}-dash2dock-lite\n`;
+    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${title}\nExec=${open_app} ${GLib.shell_quote(full_path)}\nIcon=${icon}\nStartupWMClass=${name}-dash2dock-lite\n`;
     const [, etag] = fn.replace_contents(
       content,
       null,
@@ -259,13 +268,22 @@ export const Services = class {
       'downloads',
       'Downloads',
       'folder-downloads',
-      'Downloads'
+      (this._downloadsDir ?? this._defaultDownloadsDir()).get_path()
     );
     this.setupFolderIcon(
       'documents',
       'Documents',
       'folder-documents',
-      'Documents'
+      GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) ??
+        'Documents'
+    );
+  }
+
+  // the localized XDG download folder, not necessarily ~/Downloads
+  _defaultDownloadsDir() {
+    return Gio.File.new_for_path(
+      GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
+        'Downloads'
     );
   }
 
@@ -278,40 +296,45 @@ export const Services = class {
       .replace(/^_+|_+$/g, ''); // trim leading/trailing underscores
   }
 
+  // one desktop file per mount location so that mounts don't collide
+  _mountAppName(mount) {
+    let uri = mount.get_default_location().get_uri();
+    let hash = GLib.compute_checksum_for_string(
+      GLib.ChecksumType.MD5,
+      uri,
+      -1
+    ).slice(0, 8);
+    return `mount-${this._toSafeFileName(
+      this._getMountName(mount)
+    )}-${hash}-dash2dock-lite`;
+  }
+
   setupMountIcon(mount) {
-    let basename = this._getMountName(mount); // mount.get_default_location().get_basename();
-    if (basename.startsWith('/')) {
-      // why does this happen?? issue #125
-      // unhandled... is this why CD's aren't mounted
-      // return;
-    }
     let label = mount.get_name();
-    let appname = `mount-${this._toSafeFileName(
-      basename
-    )}-dash2dock-lite.desktop`;
-    let fullpath = mount.get_default_location().get_path();
+    let appname = this._mountAppName(mount);
+    let location = mount.get_default_location();
+    // remote mounts may have no local path
+    let target = GLib.shell_quote(location.get_path() ?? location.get_uri());
     let icon = 'drive-harddisk-solidstate';
     if (mount.get_icon() && mount.get_icon().names) {
       icon =
         this.extension.lookup_icon_from_names(mount.get_icon().names) ?? icon;
     }
+    let open_exec = `${this.extension.file_opener()} ${target}`;
     let mount_exec = 'echo "not implemented"';
-    let unmount_exec = `umount ${fullpath}`;
-    let mount_id = tempPath(appname);
+    let unmount_exec = `${firstInstalledCommand(['gio mount -u', 'umount'])} ${target}`;
+    let mount_id = tempPath(`${appname}.desktop`);
     let fn = Gio.File.new_for_path(mount_id);
 
-    if (!fn.query_exists(null)) {
-      let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${label}\nExec=xdg-open ${fullpath}\nIcon=${icon}\nStartupWMClass=mount-${this._toSafeFileName(
-        basename
-      )}-dash2dock-lite\nActions=unmount;\n\n[Desktop Action mount]\nName=Mount\nExec=${mount_exec}\n\n[Desktop Action unmount]\nName=Unmount\nExec=${unmount_exec}\n`;
-      const [, etag] = fn.replace_contents(
-        content,
-        null,
-        false,
-        Gio.FileCreateFlags.REPLACE_DESTINATION,
-        null
-      );
-    }
+    // rewrite every time; the mount may have changed since the last session
+    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${label}\nExec=${open_exec}\nIcon=${icon}\nStartupWMClass=${appname}\nActions=unmount;\n\n[Desktop Action mount]\nName=Mount\nExec=${mount_exec}\n\n[Desktop Action unmount]\nName=Unmount\nExec=${unmount_exec}\n`;
+    const [, etag] = fn.replace_contents(
+      content,
+      null,
+      false,
+      Gio.FileCreateFlags.REPLACE_DESTINATION,
+      null
+    );
 
     this._mounts[mount_id] = mount;
   }
@@ -387,13 +410,18 @@ export const Services = class {
   checkTrash() {
     if (!this.extension.trash_icon) return;
 
-    let iter = this._trashDir.enumerate_children(
-      'standard::*',
-      Gio.FileQueryInfoFlags.NONE,
-      null
-    );
     let prev = this.trashFull;
-    this.trashFull = iter.next_file(null) != null;
+    try {
+      let iter = this._trashDir.enumerate_children(
+        'standard::*',
+        Gio.FileQueryInfoFlags.NONE,
+        null
+      );
+      this.trashFull = iter.next_file(null) != null;
+    } catch (err) {
+      // trash:/// is unavailable without gvfs; this runs from enable()
+      this.trashFull = false;
+    }
     if (prev != this.trashFull) {
       this.extension.animate({ refresh: true });
     }
@@ -652,7 +680,7 @@ export const Services = class {
       }
     }
 
-    return 'Volume';
+    return name || 'Volume';
   }
 
   checkMounts() {
@@ -662,24 +690,22 @@ export const Services = class {
     }
 
     let mounts = this._volumeMonitor.get_mounts() || [];
-    let mount_ids = mounts.map((mount) => {
-      let basename = this._getMountName(mount);
-      let appname = `mount-${this._toSafeFileName(
-        basename
-      )}-dash2dock-lite.desktop`;
-      return appname;
-    });
 
     this.mounts = mounts;
     mounts.forEach((mount) => {
-      let basename = this._getMountName(mount);
-      let appname = `mount-${this._toSafeFileName(
-        basename
-      )}-dash2dock-lite.desktop`;
       this._deferredMounts.push(mount);
     });
 
     // added devices will subsequently be on mounted events
+  }
+
+  // drop references once the widget is destroyed (e.g. with the render area)
+  _forgetOnDestroy(widget, dock, item, prop) {
+    widget.connect('destroy', () => {
+      if (dock[prop] === widget) dock[prop] = null;
+      if (item[prop] === widget) item[prop] = null;
+      if (item._image === widget) item._image = null;
+    });
   }
 
   //! this is out of place - services should only do background process - no rendering
@@ -715,6 +741,7 @@ export const Services = class {
           item._image = clock;
           // item._appwell.first_child.add_child(clock);
           dock.renderArea.add_child(clock);
+          this._forgetOnDestroy(clock, dock, item, '_clock');
         }
         if (clock) {
           clock._icon = icon;
@@ -747,6 +774,7 @@ export const Services = class {
           item._calendar = calendar;
           item._image = calendar;
           dock.renderArea.add_child(calendar);
+          this._forgetOnDestroy(calendar, dock, item, '_calendar');
         }
         if (calendar) {
           calendar._icon = icon;

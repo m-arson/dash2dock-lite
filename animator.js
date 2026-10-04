@@ -46,13 +46,11 @@ export let Animator = class {
 
   disable() {
     if (this._target) {
-      this._target.remove_all_children();
+      this._target.destroy_all_children();
     }
-    if (!this._renderers) {
-      this._renderers = [];
-      this._dots = [];
-      this._badges = [];
-    }
+    this._renderers = [];
+    this._dots = [];
+    this._badges = [];
   }
 
   _precreateResources(dock) {
@@ -223,7 +221,7 @@ export let Animator = class {
       icon._prev = prevIcon;
       icon._next = null;
       if (prevIcon) {
-        icon._next = icon;
+        prevIcon._next = icon;
       }
       prevIcon = icon;
     });

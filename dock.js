@@ -58,6 +58,45 @@ const SHELL_HAS_INPUT_REGION =
 const inputRegionParam = (affectsInputRegion) =>
   SHELL_HAS_INPUT_REGION ? { affectsInputRegion } : {};
 
+// Gnome 48 and older: Dash connects to these shared objects and never
+// disconnects, so record what it connects and disconnect it ourselves
+const DASH_LEAKS_SIGNALS = parseInt(Config.PACKAGE_VERSION.split('.')[0]) < 49;
+
+const createTrackedDash = () => {
+  if (!DASH_LEAKS_SIGNALS) {
+    return [new Dash(), []];
+  }
+  let connections = [];
+  let sources = [
+    Shell.AppSystem.get_default(),
+    Fav.getAppFavorites(),
+    Main.overview,
+  ];
+  let saved = sources.map((source) => [
+    source,
+    Object.getOwnPropertyDescriptor(source, 'connect'),
+  ]);
+  sources.forEach((source) => {
+    let connect = source.connect;
+    source.connect = (...args) => {
+      let id = connect.apply(source, args);
+      connections.push([source, id]);
+      return id;
+    };
+  });
+  try {
+    return [new Dash(), connections];
+  } finally {
+    saved.forEach(([source, descriptor]) => {
+      if (descriptor) {
+        Object.defineProperty(source, 'connect', descriptor);
+      } else {
+        delete source.connect;
+      }
+    });
+  }
+};
+
 export let Dock = GObject.registerClass(
   {},
   class DashToDock extends St.Widget {
@@ -148,6 +187,12 @@ export let Dock = GObject.registerClass(
         this.autohider._onLeaveEvent.bind(this.autohider),
         this
       );
+
+      // struts and dwell are chrome of their own, not children
+      this.connect('destroy', () => {
+        this.struts.destroy();
+        this.dwell.destroy();
+      });
     }
 
     destroyDash() {
@@ -161,7 +206,13 @@ export let Dock = GObject.registerClass(
           this._icons = null;
         }
 
-        this.remove_child(this.dash);
+        // destroy (not just remove) so the Dash drops its app system,
+        // favorites, overview and ctrl-alt-tab hookups
+        (this._dashConnections ?? []).forEach(([source, id]) => {
+          source.disconnect(id);
+        });
+        this._dashConnections = [];
+        this.dash.destroy();
         this.dash = null;
         this._trashIcon = null;
         this._recentFilesIcon = null;
@@ -360,7 +411,10 @@ export let Dock = GObject.registerClass(
     }
 
     getMonitor() {
-      this._monitorIndex = this.extension._queryDisplay(this._monitorIndex);
+      // docks from config.json keep the monitor they were created for
+      if (!this._config) {
+        this._monitorIndex = this.extension._queryDisplay(this._monitorIndex);
+      }
       let m =
         Main.layoutManager.monitors[this._monitorIndex] ||
         Main.layoutManager.primaryMonitor;
@@ -375,7 +429,8 @@ export let Dock = GObject.registerClass(
       }
 
       this.Dash = Dash;
-      let dash = new Dash();
+      let dash;
+      [dash, this._dashConnections] = createTrackedDash();
 
       dash._adjustIconSize = () => {};
       let con = console;
@@ -666,10 +721,15 @@ export let Dock = GObject.registerClass(
 
     _cleanupIcon(c) {
       if (c._image && c._image.get_parent()) {
-        c._image.get_parent().remove_child(c._image);
+        if (this._clock === c._image) this._clock = null;
+        if (this._calendar === c._image) this._calendar = null;
+        c._image.destroy();
       }
+      c._image = null;
+      c._clock = null;
+      c._calendar = null;
       if (c._menu && c._menu.actor) {
-        Main.uiGroup.remove_child(c._menu.actor);
+        c._menu.destroy();
         c._menu = null;
       }
       if (c._label) {
@@ -815,13 +875,14 @@ export let Dock = GObject.registerClass(
         }
         if (c._appwell && !c._appwell._activate) {
           c._appwell._activate = c._appwell.activate;
-          c._appwell.activate = () => {
+          c._appwell.activate = (button) => {
             try {
               if (!c._menu) {
                 this._maybeBounce(c);
               }
-              this._maybeMinimizeOrMaximize(c._appwell.app);
-              c._appwell._activate();
+              this._maybeMinimizeOrMaximize(c._appwell.app, button);
+              // pass the button on: middle click opens a new window
+              c._appwell._activate(button);
             } catch (err) {
               // happens with dummy DashIcons
             }
@@ -880,7 +941,7 @@ export let Dock = GObject.registerClass(
             return;
           }
           if (!mounted.includes(extra._mountPath)) {
-            this._extraIcons.remove_child(extra);
+            extra.destroy();
             this._icons = null;
           }
         });
@@ -919,7 +980,7 @@ export let Dock = GObject.registerClass(
         },
         {
           icon: '_downloadsIcon',
-          folder: Gio.File.new_for_path('Downloads').get_path(),
+          folder: this.extension.services._downloadsDir?.get_path(),
           //! find a way to avoid this
           path: tempPath('downloads-dash2dock-lite.desktop'),
           show: this.extension.downloads_icon,
@@ -938,7 +999,7 @@ export let Dock = GObject.registerClass(
           this._icons = null;
         } else if (this[f.icon] && !f.show) {
           // unpin downloads icon
-          this._extraIcons.remove_child(this[f.icon]);
+          this[f.icon].destroy();
           this[f.icon] = null;
           this._icons = null;
         }
@@ -957,7 +1018,7 @@ export let Dock = GObject.registerClass(
         this._icons = null;
       } else if (this._trashIcon && !this.extension.trash_icon) {
         // unpin trash icon
-        this._extraIcons.remove_child(this._trashIcon);
+        this._trashIcon.destroy();
         this._trashIcon = null;
         this._icons = null;
       } else if (this._trashIcon && this.extension.trash_icon) {
@@ -1320,7 +1381,7 @@ export let Dock = GObject.registerClass(
 
     _destroyList() {
       if (this._list) {
-        Main.uiGroup.remove_child(this._list);
+        this._list.destroy();
         this._list = null;
       }
     }
@@ -1346,6 +1407,13 @@ export let Dock = GObject.registerClass(
       this._animationSeq = null;
       this.extension._hiTimer.cancel(this.autohider._animationSeq);
       this.autohider._animationSeq = null;
+      // pending debounced callbacks would otherwise touch a destroyed dock
+      this.extension._loTimer.cancel(this.debounceEndSeq);
+      this.debounceEndSeq = null;
+      this.extension._loTimer.cancel(this._debounceBeginAnimateSeq);
+      this._debounceBeginAnimateSeq = null;
+      this.extension._loTimer.cancel(this.autohider._debounceCheckSeq);
+      this.autohider._debounceCheckSeq = null;
     }
 
     _updateFocusedIcon() {
@@ -1366,7 +1434,7 @@ export let Dock = GObject.registerClass(
       });
     }
 
-    _maybeMinimizeOrMaximize(app) {
+    _maybeMinimizeOrMaximize(app, button) {
       if (!app.get_windows) {
         return;
       }
@@ -1384,7 +1452,7 @@ export let Dock = GObject.registerClass(
       let button2 = (modifiers & Clutter.ModifierType.BUTTON2_MASK) != 0;
       let button3 = (modifiers & Clutter.ModifierType.BUTTON3_MASK) != 0;
       let shift = (modifiers & Clutter.ModifierType.SHIFT_MASK) != 0;
-      let isMiddleButton = button3; // middle?
+      let isMiddleButton = button == Clutter.BUTTON_MIDDLE || button2;
       let isCtrlPressed = (modifiers & Clutter.ModifierType.CONTROL_MASK) != 0;
       let openNewWindow =
         app.can_open_new_window() &&
@@ -1604,7 +1672,7 @@ export let Dock = GObject.registerClass(
       // let windows = app.get_windows();
       let windows = this.getAppWindowsFiltered(app);
 
-      if (evt.modifier_state & Clutter.ModifierType.CONTROL_MASK) {
+      if (evt.get_state() & Clutter.ModifierType.CONTROL_MASK) {
         windows = windows.filter((w) => {
           return activeWs == w.get_workspace();
         });
@@ -1630,13 +1698,8 @@ export let Dock = GObject.registerClass(
         let current_focus = focusId;
 
         if (this._scrollCounter < -1 || this._scrollCounter > 1) {
-          focusId += Math.round(this._scrollCounter);
-          if (focusId < 0) {
-            focusId = nw - 1;
-          }
-          if (focusId >= nw) {
-            focusId = 0;
-          }
+          // one window per step; rounding could skip back to the same one
+          focusId = (focusId + Math.sign(this._scrollCounter) + nw) % nw;
           this._scrollCounter = 0;
         }
 

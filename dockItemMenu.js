@@ -7,6 +7,7 @@ import { trySpawnCommandLine } from './utils.js';
 // import { trySpawnCommandLine } from 'resource:///org/gnome/shell/misc/util.js';
 
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
@@ -62,7 +63,7 @@ export const DockItemList = GObject.registerClass(
             {
               index: -1,
               name: 'More...',
-              exec: `${file_explorer} ${f.folder}`,
+              exec: `${file_explorer} ${GLib.shell_quote(f.folder)}`,
               icon: target._icon.icon_name,
               type: 'exec',
             },
@@ -171,13 +172,13 @@ export const DockItemList = GObject.registerClass(
 
         icon.connect('button-press-event', () => {
           // let path = Gio.File.new_for_path(`Downloads/${l.name}`).get_path();
-          let path = l.path;
-          let cmd = `xdg-open "${path}"`;
+          let path = GLib.shell_quote(l.path ?? '');
+          let cmd = `${dock.extension.file_opener()} ${path}`;
 
-          if (l.type.includes('directory')) {
-            cmd = `${file_explorer} "${path}"`;
+          if (l.type?.includes('directory')) {
+            cmd = `${file_explorer} ${path}`;
           }
-          if (l.type.includes('exec')) {
+          if (l.type?.includes('exec')) {
             cmd = l.exec;
           }
 

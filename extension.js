@@ -28,7 +28,7 @@ import Graphene from 'gi://Graphene';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { tempPath, trySpawnCommandLine } from './utils.js';
-import { loadFile } from './utils.js';
+import { loadFile, firstInstalledCommand } from './utils.js';
 
 import { Timer } from './timer.js';
 import { Style } from './style.js';
@@ -125,9 +125,12 @@ export default class Dash2DockLiteExt extends Extension {
       dock.undock();
       dock.cancelAnimations();
       dock.destroyDash();
+      dock.destroy();
       this.dock = null;
     });
     this.docks = [];
+    // stop forwarding display events to the destroyed docks
+    this.listeners = this.services ? [this.services] : [];
   }
 
   recreateAllDocks(delay = 750) {
@@ -381,6 +384,9 @@ export default class Dash2DockLiteExt extends Extension {
         }
         this._config.speed_up = speed_up;
       }
+
+      // the config may override the file explorer used by these items
+      this.services?.setupFolderIcons();
     }
 
     let fn_icons = Gio.File.new_for_path('.config/d2da/icons.json');
@@ -1217,10 +1223,15 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   file_explorer() {
-    let fe = 'nautilus --select';
+    let candidates = ['nautilus --select', 'xdg-open', 'gio open'];
     if (this._config && this._config['file-explorer']) {
-      fe = this._config['file-explorer'];
+      candidates.unshift(this._config['file-explorer']);
     }
-    return fe;
+    return firstInstalledCommand(candidates);
+  }
+
+  // opens files and URIs with their default application
+  file_opener() {
+    return firstInstalledCommand(['xdg-open', 'gio open']);
   }
 }
