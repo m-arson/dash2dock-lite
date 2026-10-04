@@ -1615,19 +1615,10 @@ export let Dock = GObject.registerClass(
 
         let icon = target;
 
-        // adjustment for touch scroll (much more sensitive) and mouse scrollwheel
-        // Gnome 50: the source device may be null
-        let multiplier = 1;
-        let device = evt.get_source_device();
-        if (
-          device?.get_device_type() ==
-            Clutter.InputDeviceType.TOUCHPAD_DEVICE ||
-          device?.get_device_name()?.includes('Touch')
-        ) {
-          multiplier = 1;
-        } else {
-          multiplier = 5;
-        }
+        // touchpads arrive here as discrete steps that mutter emulates at
+        // about one per wheel click, so weigh them like the scrollwheel;
+        // a lower weight left touchpad swipes unable to switch windows
+        let multiplier = 5;
 
         let SCROLL_RESOLUTION =
           MIN_SCROLL_RESOLUTION +
