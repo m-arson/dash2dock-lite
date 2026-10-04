@@ -815,10 +815,13 @@ export let Dock = GObject.registerClass(
       if (this.dash._showAppsIcon) {
         this.dash._showAppsIcon.visible = this.extension.apps_icon;
         if (this._inspectIcon(this.dash._showAppsIcon)) {
-          let icon = this.dash._showAppsIcon._icon;
-          if (!icon._connected) {
-            icon._connected = true;
-            icon.connectObject(
+          // presses on the icon bubble up to the item; handle them there
+          // since the icon may be allocated no space (Gnome 42 to 46)
+          let appsIcon = this.dash._showAppsIcon;
+          if (!appsIcon._pressConnected) {
+            appsIcon._pressConnected = true;
+            appsIcon.reactive = true;
+            appsIcon.connectObject(
               'button-press-event',
               () => {
                 let overview = Main.uiGroup
@@ -833,6 +836,13 @@ export let Dock = GObject.registerClass(
                 }
                 return Clutter.EVENT_PROPAGATE;
               },
+              this
+            );
+          }
+          let icon = appsIcon._icon;
+          if (!icon._connected) {
+            icon._connected = true;
+            icon.connectObject(
               'enter-event',
               () => {
                 this.dash._showAppsIcon.showLabel();
