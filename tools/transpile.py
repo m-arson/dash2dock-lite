@@ -93,6 +93,13 @@ def dump(f):
         if "this.getSettings(schemaId)" in l:
             l = l.replace("this.getSettings", "ExtensionUtils.getSettings");
 
+        # St.IconTheme is Gnome 43+; Gnome 42 still uses the GTK 3 icon theme
+        if "St.IconTheme.new()" in l:
+            l = l.replace(
+                "St.IconTheme.new()",
+                "(St.IconTheme ? St.IconTheme.new() : imports.gi.Gtk.IconTheme.get_default())",
+            )
+
         if l.startswith("import ") and not inImport:
             # commentOut = True
             inImport = True
