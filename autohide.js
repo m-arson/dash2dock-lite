@@ -32,6 +32,9 @@ export let AutoHide = class {
     this._enabled = true;
     this._shown = true;
     this._dwell = 0;
+    // windows may already cover the dock; nothing else checks until the
+    // focus or stacking changes
+    this._debounceCheckHide();
     console.log('autohide enabled');
   }
 
@@ -104,8 +107,16 @@ export let AutoHide = class {
           this.last_pointer = pointer;
         }
       } else {
-        // bottom
-        if (dx < area && pointer[1] + 4 > monitor.y + sh) {
+        if (
+          // bottom
+          (this.dock._position == DockPosition.BOTTOM &&
+            dx < area &&
+            pointer[1] + 4 > monitor.y + sh) ||
+          // top
+          (this.dock._position == DockPosition.TOP &&
+            dx < area &&
+            pointer[1] < monitor.y + 4)
+        ) {
           this._dwell++;
         } else {
           this._dwell = 0;

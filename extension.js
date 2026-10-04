@@ -28,7 +28,7 @@ import Graphene from 'gi://Graphene';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { tempPath, trySpawnCommandLine } from './utils.js';
-import { loadFile, firstInstalledCommand } from './utils.js';
+import { loadFile, firstInstalledCommand, configFile } from './utils.js';
 
 import { Timer } from './timer.js';
 import { Style } from './style.js';
@@ -145,6 +145,10 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _showMainOverviewDash(show) {
+    if (show) {
+      // the dash container is hidden on startup-complete
+      Main.overview.dash.last_child.visible = true;
+    }
     Main.overview.dash.opacity = show ? 255 : 0;
     // Main.overview.dash._background.opacity = show ? 255 : 0;
     Main.overview.dash._background.style = show
@@ -164,6 +168,23 @@ export default class Dash2DockLiteExt extends Extension {
     Main.overview.dash._showAppsIcon.opacity = show ? 255 : 0;
     Main.overview.dash._showAppsIcon.child.reactive = show;
     Main.overview.dash._showAppsIcon.child.track_hover = show;
+  }
+
+  _patchMainOverviewDash() {
+    // Gnome 50+: a Dash item gets its icon only once styled, and items made
+    // while the hidden dash redisplays (favorites reordered on the dock)
+    // never are, so Dash._adjustIconSize throws on them
+    let dash = Main.overview.dash;
+    let adjustIconSize = Object.getPrototypeOf(dash)._adjustIconSize;
+    dash._adjustIconSize = function () {
+      this._box.get_children().forEach((c) => {
+        let icon = c.child?._delegate?.icon;
+        if (icon && !icon.icon && icon._createIconTexture) {
+          icon._createIconTexture(icon.iconSize);
+        }
+      });
+      return adjustIconSize.call(this);
+    };
   }
 
   enable() {
@@ -208,6 +229,7 @@ export default class Dash2DockLiteExt extends Extension {
 
     Main.overview.dash.__box = Main.overview.dash._box;
     this._showMainOverviewDash(false);
+    this._patchMainOverviewDash();
     this.docks = [];
 
     this.icon_theme = St.IconTheme.new();
@@ -260,6 +282,7 @@ export default class Dash2DockLiteExt extends Extension {
     this._unloadConfig();
 
     this._showMainOverviewDash(true);
+    delete Main.overview.dash._adjustIconSize;
 
     this.destroyDocks();
     this.docks = [];
@@ -353,7 +376,7 @@ export default class Dash2DockLiteExt extends Extension {
 
   async _loadConfig() {
     this._config = {};
-    let fn_config = Gio.File.new_for_path('.config/d2da/config.json');
+    let fn_config = configFile('config.json');
     if (fn_config.query_exists(null)) {
       try {
         const contents = await loadFile(fn_config);
@@ -389,7 +412,7 @@ export default class Dash2DockLiteExt extends Extension {
       this.services?.setupFolderIcons();
     }
 
-    let fn_icons = Gio.File.new_for_path('.config/d2da/icons.json');
+    let fn_icons = configFile('icons.json');
     if (fn_icons.query_exists(null)) {
       try {
         const contents = await loadFile(fn_icons);
@@ -400,7 +423,7 @@ export default class Dash2DockLiteExt extends Extension {
           Object.keys(this.icon_map).forEach((k) => {
             let path = this.icon_map[k];
             if (path.toLowerCase().endsWith('.svg')) {
-              let file = Gio.File.new_for_path(`.config/d2da/${path}`);
+              let file = configFile(path);
               if (file.query_exists(null)) {
                 console.log(`loading icon ${file.get_path()}`);
                 this.icon_map_cache[k] = new Gio.FileIcon({ file: file });
@@ -414,7 +437,7 @@ export default class Dash2DockLiteExt extends Extension {
           Object.keys(this.app_map).forEach((k) => {
             let path = this.app_map[k];
             if (path.toLowerCase().endsWith('.svg')) {
-              let file = Gio.File.new_for_path(`.config/d2da/${path}`);
+              let file = configFile(path);
               if (file.query_exists(null)) {
                 console.log(`loading icon ${file.get_path()}`);
                 this.app_map_cache[k] = new Gio.FileIcon({ file: file });
@@ -427,7 +450,7 @@ export default class Dash2DockLiteExt extends Extension {
       }
     }
 
-    let fn_style = Gio.File.new_for_path('.config/d2da/style.css');
+    let fn_style = configFile('style.css');
     if (fn_style.query_exists(null)) {
       let ctx = St.ThemeContext.get_for_stage(global.stage);
       let theme = ctx.get_theme();
@@ -440,7 +463,7 @@ export default class Dash2DockLiteExt extends Extension {
     this.icon_map_cache = {};
     this.app_map_cache = {};
 
-    let fn_style = Gio.File.new_for_path('.config/d2da/style.css');
+    let fn_style = configFile('style.css');
     if (fn_style.query_exists(null)) {
       let ctx = St.ThemeContext.get_for_stage(global.stage);
       let theme = ctx.get_theme();
@@ -651,6 +674,8 @@ export default class Dash2DockLiteExt extends Extension {
         case 'downloads-icon':
         case 'documents-icon':
         case 'trash-icon': {
+          // the trash may have filled while its icon was off
+          this.services?.checkTrash();
           this._updateLayout();
           this.animate({ refresh: true });
           break;
@@ -1227,7 +1252,8 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   file_explorer() {
-    let candidates = ['nautilus --select', 'xdg-open', 'gio open'];
+    // --select would open the parent folder instead
+    let candidates = ['nautilus', 'xdg-open', 'gio open'];
     if (this._config && this._config['file-explorer']) {
       candidates.unshift(this._config['file-explorer']);
     }

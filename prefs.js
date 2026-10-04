@@ -16,7 +16,7 @@ import {
   ExtensionPreferences,
   gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import { tempPath } from './utils.js';
+import { tempPath, configFile } from './utils.js';
 
 export default class Preferences extends ExtensionPreferences {
   constructor(metadata) {
@@ -109,9 +109,7 @@ export default class Preferences extends ExtensionPreferences {
   }
 
   async selectFolder(window, builder, settings, target) {
-    const dialog = new Gtk.FileDialog();
-    dialog.select_folder(window, null, (dialog, task) => {
-      let folder = dialog.select_folder_finish(task);
+    const onFolder = (folder) => {
       if (folder instanceof Gio.File) {
         let path = folder.get_path();
         console.log(`${target} = ${path}`);
@@ -120,6 +118,37 @@ export default class Preferences extends ExtensionPreferences {
       } else {
         console.log('No valid folder selected.');
       }
+    };
+
+    // Gtk.FileDialog needs GTK 4.10; Gnome 42 and 43 ship older GTK
+    if (!Gtk.FileDialog) {
+      // GTK does not keep native dialogs alive; hold it until it responds
+      const chooser = new Gtk.FileChooserNative({
+        action: Gtk.FileChooserAction.SELECT_FOLDER,
+        transient_for: window,
+        modal: true,
+      });
+      this._folderChooser = chooser;
+      chooser.connect('response', (chooser, response) => {
+        if (response == Gtk.ResponseType.ACCEPT) {
+          onFolder(chooser.get_file());
+        }
+        chooser.destroy();
+        this._folderChooser = null;
+      });
+      chooser.show();
+      return null;
+    }
+
+    const dialog = new Gtk.FileDialog();
+    dialog.select_folder(window, null, (dialog, task) => {
+      let folder = null;
+      try {
+        folder = dialog.select_folder_finish(task);
+      } catch (err) {
+        // dismissed: keep the current folder
+      }
+      onFolder(folder);
     });
     return null;
   }
@@ -133,7 +162,6 @@ export default class Preferences extends ExtensionPreferences {
 
     if (builder.get_object('downloads-folder')) {
       builder.get_object('downloads-folder').connect('clicked', () => {
-        settings.set_string('downloads-path', '');
         this.selectFolder(window, builder, settings, 'downloads-path')
           .then((path) => {
             console.log(path);
@@ -225,9 +253,7 @@ export default class Preferences extends ExtensionPreferences {
 
     this._themed_presets = [];
     this.preloadPresets(`${this.path}/themes`);
-    this.preloadPresets(
-      Gio.File.new_for_path('.config/d2da/themes').get_path()
-    );
+    this.preloadPresets(configFile('themes').get_path());
     this._buildThemesMenu(window);
     this.updateMonitors();
 
@@ -353,14 +379,20 @@ export default class Preferences extends ExtensionPreferences {
   }
 
   updateMonitors() {
-    let monitors = this._monitorsConfig.monitors;
-    let count = monitors.length;
+    // the extension reads n as Main.layoutManager.monitors[n], with 0 meaning
+    // the primary monitor and the primary's own index meaning monitor 0
+    let monitors = this._monitorsConfig.logicalMonitors;
+    let primary = monitors.findIndex((m) => m.isPrimary);
     let list = new Gtk.StringList();
     list.append('Primary Monitor');
-    for (let i = 0; i < count; i++) {
-      let m = monitors[i];
-      if (!m.active) continue;
-      list.append(m.displayName);
+    for (let i = 1; i < monitors.length; i++) {
+      let m = monitors[i == primary ? 0 : i];
+      let sameName = monitors.filter((o) => o.displayName == m.displayName);
+      list.append(
+        sameName.length > 1
+          ? `${m.displayName} (${m.connector})`
+          : m.displayName
+      );
     }
     this._builder.get_object('preferred-monitor').set_model(list);
   }

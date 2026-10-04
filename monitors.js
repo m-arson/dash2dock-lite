@@ -43,18 +43,24 @@ export const MonitorsConfig = GObject.registerClass(
         this._updateResources()
       );
 
+      this._primaryMonitor = null;
+      this._monitors = [];
+      this._logicalMonitors = [];
       this._updateResources();
     }
 
     _updateResources() {
-      this._primaryMonitor = null;
-      this._monitors = [];
-      this._logicalMonitors = [];
       this._monitorsConfigProxy.GetCurrentStateRemote((resources, err) => {
         if (err) {
           logError(err);
           return;
         }
+
+        // reset here, not before the call: replies to overlapping calls
+        // would otherwise add to the same lists
+        this._primaryMonitor = null;
+        this._monitors = [];
+        this._logicalMonitors = [];
 
         const [serial_, monitors, logicalMonitors] = resources;
         let index = 0;
@@ -91,6 +97,8 @@ export const MonitorsConfig = GObject.registerClass(
               monitor.active = true;
               monitor.isPrimary = isPrimary;
               if (monitor.isPrimary) this._primaryMonitor = monitor;
+              // same order as Main.layoutManager.monitors
+              this._logicalMonitors.push(monitor);
               break;
             }
           }
@@ -115,6 +123,10 @@ export const MonitorsConfig = GObject.registerClass(
 
     get monitors() {
       return this._monitors;
+    }
+
+    get logicalMonitors() {
+      return this._logicalMonitors;
     }
   }
 );

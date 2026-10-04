@@ -18,6 +18,14 @@
 * fix middle click to open a new window, scroll cycling between two windows, touchpad scrolling
 * fix per-monitor docks from config.json
 * fix ```make g44``` build
+* fix preferred monitor setting placing the dock on the wrong monitor
+* fix reserved screen area after moving the dock or turning off autohide
+* fix autohide not hiding until a window moved, pressure sense with the dock at the top
+* fix Downloads folder chooser on Gnome 42 and 43, Downloads list missing files moved in
+* fix trash icon state when enabled, Empty Trash no longer opens a terminal
+* open the Trash, Downloads and Documents folders instead of selecting them in their parent folder
+* fix Gnome 50 overview dash errors after rearranging favorites, overview dash left hidden after disable
+* load ~/.config/d2da files regardless of the working directory
 
 # Release 84
 

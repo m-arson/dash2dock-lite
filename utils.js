@@ -23,6 +23,17 @@ export const tempPath = (path) => {
   return `/tmp/${uuid}-${path}`;
 };
 
+/**
+ * Return a file under ~/.config/d2da, independent of the working directory
+ * @param {string} name
+ * @returns {Gio.File}
+ */
+export const configFile = (name) => {
+  return Gio.File.new_for_path(
+    GLib.build_filenamev([GLib.get_home_dir(), '.config', 'd2da', name])
+  );
+};
+
 export const getPointer = () => {
   return pointer_wrapper;
 };

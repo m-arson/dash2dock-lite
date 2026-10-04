@@ -172,9 +172,9 @@ export const Services = class {
       'changed',
       (fileMonitor, file, otherFile, eventType) => {
         switch (eventType) {
+          // wait for CHANGES_DONE_HINT; a file moved in gets no other event
           case Gio.FileMonitorEvent.CHANGED:
           case Gio.FileMonitorEvent.CREATED:
-          case Gio.FileMonitorEvent.MOVED_IN:
             return;
         }
         this._debounceCheckDownloads();
@@ -219,20 +219,24 @@ export const Services = class {
   }
 
   setupTrashIcon() {
-    let extension_path = this.extension.path;
     let appname = `trash-dash2dock-lite.desktop`;
     let app_id = tempPath(appname);
     let fn = Gio.File.new_for_path(app_id);
     // the program must exist or Gio refuses to load the desktop file
     let open_app = this.extension.file_explorer();
 
-    let trash_action = `${extension_path}/apps/empty-trash.sh`;
-    {
-      let fn = Gio.File.new_for_path('.local/share/Trash');
-      trash_action = `rm -rf "${fn.get_path()}"`;
+    // gio empties the trash of every volume without opening a terminal
+    let trash_action = 'gio trash --empty';
+    let trash_terminal = 'false';
+    if (!GLib.find_program_in_path('gio')) {
+      let fn = Gio.File.new_for_path(
+        GLib.build_filenamev([GLib.get_user_data_dir(), 'Trash'])
+      );
+      trash_action = `rm -rf ${GLib.shell_quote(fn.get_path())}`;
+      trash_terminal = 'true';
     }
 
-    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=Trash\nExec=${open_app} trash:///\nIcon=user-trash\nStartupWMClass=trash-dash2dock-lite\nActions=trash\n\n[Desktop Action trash]\nName=Empty Trash\nExec=${trash_action}\nTerminal=true\n`;
+    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=Trash\nExec=${open_app} trash:///\nIcon=user-trash\nStartupWMClass=trash-dash2dock-lite\nActions=trash\n\n[Desktop Action trash]\nName=Empty Trash\nExec=${trash_action}\nTerminal=${trash_terminal}\n`;
     const [, etag] = fn.replace_contents(
       content,
       null,
@@ -275,7 +279,7 @@ export const Services = class {
       'Documents',
       'folder-documents',
       GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) ??
-        'Documents'
+        GLib.build_filenamev([GLib.get_home_dir(), 'Documents'])
     );
   }
 
@@ -283,7 +287,7 @@ export const Services = class {
   _defaultDownloadsDir() {
     return Gio.File.new_for_path(
       GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
-        'Downloads'
+        GLib.build_filenamev([GLib.get_home_dir(), 'Downloads'])
     );
   }
 
@@ -622,8 +626,8 @@ export const Services = class {
 
   _debounceCheckRecents() {
     if (this.extension._loTimer) {
-      if (!this._debounceCheckSeq) {
-        this._debounceCheckSeq = this.extension._loTimer.runDebounced(
+      if (!this._debounceCheckRecentsSeq) {
+        this._debounceCheckRecentsSeq = this.extension._loTimer.runDebounced(
           () => {
             this.checkRecents();
           },
@@ -631,7 +635,7 @@ export const Services = class {
           'debounceCheckRecents'
         );
       } else {
-        this.extension._loTimer.runDebounced(this._debounceCheckSeq);
+        this.extension._loTimer.runDebounced(this._debounceCheckRecentsSeq);
       }
     }
   }
@@ -648,8 +652,8 @@ export const Services = class {
 
   _debounceCheckDownloads() {
     if (this.extension._loTimer) {
-      if (!this._debounceCheckSeq) {
-        this._debounceCheckSeq = this.extension._loTimer.runDebounced(
+      if (!this._debounceCheckDownloadsSeq) {
+        this._debounceCheckDownloadsSeq = this.extension._loTimer.runDebounced(
           () => {
             this.checkDownloads();
           },
@@ -657,7 +661,7 @@ export const Services = class {
           'debounceCheckDownloads'
         );
       } else {
-        this.extension._loTimer.runDebounced(this._debounceCheckSeq);
+        this.extension._loTimer.runDebounced(this._debounceCheckDownloadsSeq);
       }
     }
   }

@@ -520,7 +520,7 @@ export let Animator = class {
         icon._positionCache = null;
       }
 
-      if (dock.animation_fps > 0) {
+      if (dock.extension.animation_fps > 0) {
         icon._icon.translationX = translationX;
         icon._icon.translationY = translationY;
       } else {
@@ -1021,6 +1021,8 @@ export let Animator = class {
           iconSize * 0.2 * scaleFactor +
           edge_distance -
           dock._background._padding * scaleFactor;
+        // reset what autohide or the previous position left behind
+        dock.struts.y = dock.y;
         dock.struts.height = dock.height;
 
         if (dock.extension.autohide_dash) {
@@ -1030,13 +1032,13 @@ export let Animator = class {
           // dock.struts.width *= 1.25;
         }
 
-        // dock.struts.y = dock.y;
         if (dock._position == DockPosition.RIGHT) {
           dock.struts.x = dock.x + dock.width - dock.struts.width;
         } else {
           dock.struts.x = dock.x;
         }
       } else {
+        dock.struts.x = dock.x;
         dock.struts.width = dock.width;
         dock.struts.height =
           dock._background.height +
@@ -1051,7 +1053,6 @@ export let Animator = class {
           // dock.struts.height *= 1.25;
         }
 
-        // dock.struts.x = dock.x;
         if (dock._position == DockPosition.BOTTOM) {
           dock.struts.y = dock.y + dock.height - dock.struts.height;
         } else {
