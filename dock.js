@@ -9,6 +9,7 @@ import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import Clutter from 'gi://Clutter';
 import Graphene from 'gi://Graphene';
+import Meta from 'gi://Meta';
 import St from 'gi://St';
 
 import { Dash } from 'resource:///org/gnome/shell/ui/dash.js';
@@ -48,6 +49,14 @@ const ANIM_DEBOUNCE_END_DELAY = 750;
 
 const MIN_SCROLL_RESOLUTION = 4;
 const MAX_SCROLL_RESOLUTION = 10;
+
+// Gnome 50 dropped X11 and with it the affectsInputRegion chrome parameter;
+// addChrome() throws on parameters it does not know
+const SHELL_HAS_INPUT_REGION =
+  parseInt(Config.PACKAGE_VERSION.split('.')[0]) < 50;
+
+const inputRegionParam = (affectsInputRegion) =>
+  SHELL_HAS_INPUT_REGION ? { affectsInputRegion } : {};
 
 export let Dock = GObject.registerClass(
   {},
@@ -428,21 +437,19 @@ export let Dock = GObject.registerClass(
 
       Main.layoutManager.addChrome(this.struts, {
         affectsStruts: !this.extension.autohide_dash,
-        ...(Config.PACKAGE_VERSION[0] == '4'
-          ? { affectsInputRegion: true }
-          : {}),
+        ...inputRegionParam(true),
         trackFullscreen: false,
       });
 
       Main.layoutManager.addChrome(this, {
         affectsStruts: false,
-        // affectsInputRegion: false,
+        ...inputRegionParam(false),
         trackFullscreen: true,
       });
 
       Main.layoutManager.addChrome(this.dwell, {
         affectsStruts: false,
-        // affectsInputRegion: false,
+        ...inputRegionParam(false),
         trackFullscreen: false,
       });
 
@@ -1372,7 +1379,7 @@ export let Dock = GObject.registerClass(
 
       let event = Clutter.get_current_event();
       let modifiers = event ? event.get_state() : 0;
-      let pressed = event.type() == Clutter.EventType.BUTTON_PRESS;
+      let pressed = event?.type() == Clutter.EventType.BUTTON_PRESS;
       let button1 = (modifiers & Clutter.ModifierType.BUTTON1_MASK) != 0;
       let button2 = (modifiers & Clutter.ModifierType.BUTTON2_MASK) != 0;
       let button3 = (modifiers & Clutter.ModifierType.BUTTON3_MASK) != 0;
@@ -1399,14 +1406,18 @@ export let Dock = GObject.registerClass(
       if (focusedWindow) {
         this.extension._hiTimer.runOnce(() => {
           if (shift) {
+            // Gnome 49 dropped the Meta.MaximizeFlags argument
+            let flags = focusedWindow.set_maximize_flags
+              ? []
+              : [Meta.MaximizeFlags.BOTH];
             if (
               (focusedWindow.is_maximized && focusedWindow.is_maximized()) ||
               (focusedWindow.get_maximized &&
                 focusedWindow.get_maximized() == 3)
             ) {
-              focusedWindow.unmaximize(3);
+              focusedWindow.unmaximize(...flags);
             } else {
-              focusedWindow.maximize(3);
+              focusedWindow.maximize(...flags);
             }
           } else {
             windows.forEach((w) => {
@@ -1524,10 +1535,13 @@ export let Dock = GObject.registerClass(
         let icon = target;
 
         // adjustment for touch scroll (much more sensitive) and mouse scrollwheel
+        // Gnome 50: the source device may be null
         let multiplier = 1;
+        let device = evt.get_source_device();
         if (
-          evt.get_source_device().get_device_type() == 5 ||
-          evt.get_source_device().get_device_name().includes('Touch')
+          device?.get_device_type() ==
+            Clutter.InputDeviceType.TOUCHPAD_DEVICE ||
+          device?.get_device_name()?.includes('Touch')
         ) {
           multiplier = 1;
         } else {

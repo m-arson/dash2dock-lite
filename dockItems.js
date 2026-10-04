@@ -38,8 +38,8 @@ class DockItemMenu extends PopupMenu.PopupMenu {
 
     this._newWindowItem = this.addAction('Open Window', () => {
       let workspaceManager = global.workspace_manager;
-      let workspace = workspaceManager.get_active_workspace();
-      let ctx = global.create_app_launch_context(0, workspace);
+      let workspaceIndex = workspaceManager.get_active_workspace_index();
+      let ctx = global.create_app_launch_context(0, workspaceIndex);
       desktopApp.launch([], ctx);
       this._onActivate();
     });
@@ -48,8 +48,8 @@ class DockItemMenu extends PopupMenu.PopupMenu {
       let name = desktopApp.get_action_name(action);
       this.addAction(name, () => {
         let workspaceManager = global.workspace_manager;
-        let workspace = workspaceManager.get_active_workspace();
-        let ctx = global.create_app_launch_context(0, workspace);
+        let workspaceIndex = workspaceManager.get_active_workspace_index();
+        let ctx = global.create_app_launch_context(0, workspaceIndex);
         desktopApp.launch_action(action, ctx);
         this.item.dock.extension.animate({ refresh: true });
       });
@@ -60,7 +60,8 @@ class DockItemMenu extends PopupMenu.PopupMenu {
 
   popup() {
     this.open(BoxPointer.PopupAnimation.FULL);
-    this._menuManager.ignoreRelease();
+    // removed in Gnome 50
+    this._menuManager.ignoreRelease?.();
   }
 }
 

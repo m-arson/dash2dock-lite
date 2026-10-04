@@ -1,4 +1,3 @@
-uniform sampler2D tex;
 uniform float red;
 uniform float green;
 uniform float blue;
@@ -13,10 +12,8 @@ vec3 greyscale(vec3 color) {
     return greyscale(color, 1.0);
 }
 
-void main() {
-    vec4 c = texture2D(tex, cogl_tex_coord_in[0].st);
+vec4 d2da_effect(vec4 c) {
     vec3 pix_color = greyscale(c.rgb);
     vec3 color = vec3(red * c.a, green * c.a, blue * c.a);
-
-    cogl_color_out = vec4(mix(pix_color, color, blend), c.a);
+    return vec4(mix(pix_color, color, blend), c.a);
 }
