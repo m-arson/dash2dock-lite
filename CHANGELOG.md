@@ -11,6 +11,13 @@
 # Next Release
 
 * Bug fixes
+* add Gnome 51 support (icon effects use Cogl snippets)
+* fix Gnome 50 errors: dock item right-click menu, scroll to cycle windows
+* fix leaked docks and dashes after disable/lock screen
+* fix trash, downloads and mounted icons without nautilus, localized Downloads folder, several mounted volumes
+* fix middle click to open a new window, scroll cycling between two windows
+* fix per-monitor docks from config.json
+* fix ```make g44``` build
 
 # Release 84
 

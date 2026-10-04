@@ -17,8 +17,8 @@
 
 ### Notice
 
-* Supports Gnome 42, 43, 44, 45, 46, 47, 48, 49
-* Initial support for Gnome 50
+* Supports Gnome 46, 47, 48, 49, 50, 51
+* Gnome 42, 43, 44 through ```make g44``` (see below)
 * Prior versions are largely unsupported
 
 ### Features
