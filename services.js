@@ -3,7 +3,6 @@
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {
   tempPath,
-  trySpawnCommandLine,
   firstInstalledCommand,
 } from './utils.js';
 // import { trySpawnCommandLine } from 'resource:///org/gnome/shell/misc/util.js';
@@ -19,6 +18,49 @@ import { Calendar } from './apps/calendar.js';
 const CANVAS_SIZE = 120;
 const DEBOUNCE_CHECK_TIMEOUT = 750;
 
+// Gio's asynchronous methods use callbacks unless explicitly promisified.
+// Keep the wrappers local so other extensions' Gio prototypes are untouched.
+function enumerateChildren(directory, attributes, cancellable) {
+  return new Promise((resolve, reject) => {
+    directory.enumerate_children_async(attributes, Gio.FileQueryInfoFlags.NONE,
+      GLib.PRIORITY_DEFAULT, cancellable, (file, result) => {
+        try { resolve(file.enumerate_children_finish(result)); }
+        catch (error) { reject(error); }
+      });
+  });
+}
+
+function nextFiles(enumerator, count, cancellable) {
+  return new Promise((resolve, reject) => {
+    enumerator.next_files_async(count, GLib.PRIORITY_DEFAULT, cancellable,
+      (source, result) => {
+        try { resolve(source.next_files_finish(result)); }
+        catch (error) { reject(error); }
+      });
+  });
+}
+
+function queryInfo(file, attributes, cancellable) {
+  return new Promise((resolve, reject) => {
+    file.query_info_async(attributes, Gio.FileQueryInfoFlags.NONE,
+      GLib.PRIORITY_DEFAULT, cancellable, (source, result) => {
+        try { resolve(source.query_info_finish(result)); }
+        catch (error) { reject(error); }
+      });
+  });
+}
+
+function closeEnumerator(enumerator) {
+  if (!enumerator) return Promise.resolve();
+  return new Promise((resolve) => {
+    // Closing must still happen after the operation's cancellable is cancelled.
+    enumerator.close_async(GLib.PRIORITY_DEFAULT, null, (source, result) => {
+      try { source.close_finish(result); } catch (error) {}
+      resolve();
+    });
+  });
+}
+
 class ServiceCounter {
   constructor(name, interval, callback, advance) {
     advance = advance || 0;
@@ -31,7 +73,8 @@ class ServiceCounter {
   update(elapsed) {
     this._ticks += elapsed;
     if (this._ticks >= this._interval) {
-      this._ticks -= this._interval;
+      // Waking after suspend needs one refresh, not a backlog of missed ones.
+      this._ticks %= this._interval;
       if (this._callback) {
         this._callback();
       }
@@ -43,14 +86,21 @@ class ServiceCounter {
 
 export const Services = class {
   enable() {
+    if (this._enabled) this.disable();
+    this._enabled = true;
+    this._generation = (this._generation ?? 0) + 1;
     this._mounts = {};
     this._services = [
-      new ServiceCounter('trash', 1000 * 15, this.checkTrash.bind(this)),
+      new ServiceCounter('trash', 1000 * 15, () => {
+        // A working monitor delivers changes without polling the filesystem.
+        if (!this._trashMonitor) this.checkTrash();
+      }),
       new ServiceCounter(
         'clock',
         1000 * 60, // every minute
         // 1000 * 1, // every second
         () => {
+          if (!this.extension.clock_icon) return;
           this.extension.docks.forEach((d) => {
             d._onClock();
           });
@@ -61,99 +111,145 @@ export const Services = class {
         'calendar',
         1000 * 60 * 15,
         () => {
+          if (!this.extension.calendar_icon) return;
           this.extension.docks.forEach((d) => {
             d._onCalendar();
           });
         },
         -1
       ),
-      new ServiceCounter(
-        'ping',
-        1000 * 5,
-        () => {
-          // deferred stuff is required when .desktop entry if first created
-          // check for deferred mounts
-          this._commitMounts();
-
-          // notifications
-          this.checkNotifications();
-        },
-        0
-      ),
     ];
 
     this._disableNotifications = 0;
 
     this._deferredMounts = [];
-    this._volumeMonitor = Gio.VolumeMonitor.get();
-    this._volumeMonitor.connectObject(
-      'mount-added',
-      this._onMountAdded.bind(this),
-      'mount-removed',
-      this._onMountRemoved.bind(this),
-      this
-    );
-
-    this._trashDir = Gio.File.new_for_uri('trash:///');
-    this._trashMonitor = this._trashDir.monitor(
-      Gio.FileMonitorFlags.WATCH_MOVES,
-      null
-    );
-    this._trashMonitor.connectObject(
-      'changed',
-      (fileMonitor, file, otherFile, eventType) => {
-        switch (eventType) {
-          case Gio.FileMonitorEvent.CHANGED:
-          case Gio.FileMonitorEvent.CREATED:
-          case Gio.FileMonitorEvent.MOVED_IN:
-            return;
-        }
-        this.checkTrash();
-      },
-      this
-    );
-
+    this.setupTrash();
     this.setupDownloads();
-
-    this._debounceCheckRecents();
-
-    //! ***services startup function are blocking calls. async these***
-    this.checkTrash();
-
-    this.checkNotifications();
+    this._setupNotifications();
 
     this.checkMounts();
     this._commitMounts();
   }
 
   disable() {
-    this._downloadsMonitor.disconnectObject(this);
-    this._downloadsMonitor.cancel();
-    this._downloadsMonitor = null;
-    this._services = [];
-    this._volumeMonitor.disconnectObject(this);
-    this._volumeMonitor = null;
-    this._trashMonitor.disconnectObject(this);
-    this._trashMonitor.cancel();
-    this._trashMonitor = null;
-    this._trashDir = null;
-  }
-
-  setupDownloads() {
+    this._enabled = false;
+    this._generation = (this._generation ?? 0) + 1;
+    this._downloadsCancellable?.cancel();
+    this._downloadsCancellable = null;
+    this._downloadsCheckPending = false;
+    this._trashCancellable?.cancel();
+    this._trashCancellable = null;
+    this._trashCheckPending = false;
+    Main.messageTray.disconnectObject?.(this);
+    for (const source of this._notificationSources ?? []) source.disconnectObject(this);
+    this._notificationSources = null;
+    if (this.extension._loTimer) {
+      if (this._debounceCheckDownloadsSeq) {
+        this.extension._loTimer.cancel(this._debounceCheckDownloadsSeq);
+        this._debounceCheckDownloadsSeq = null;
+      }
+    }
     if (this._downloadsMonitor) {
       this._downloadsMonitor.disconnectObject(this);
       this._downloadsMonitor.cancel();
       this._downloadsMonitor = null;
     }
-    this._downloadsUserDir = this.extension.downloads_path;
-    let fn = Gio.File.new_for_path(this._downloadsUserDir);
-    if (!fn.query_exists(null)) {
-      this._downloadsUserDir = null;
+    this._services = [];
+    if (this._volumeMonitor) {
+      this._volumeMonitor.disconnectObject(this);
+      this._volumeMonitor = null;
     }
-    if (this._downloadsUserDir) {
-      this._downloadsDir = Gio.File.new_for_path(this._downloadsUserDir);
+    if (this._trashMonitor) {
+      this._trashMonitor.disconnectObject(this);
+      this._trashMonitor.cancel();
+      this._trashMonitor = null;
+    }
+    this._trashDir = null;
+    this._downloadsDir = null;
+    this._downloadFiles = [];
+    this._downloadFilesLength = 0;
+    this._mounts = {};
+    this._deferredMounts = [];
+    this.mounts = [];
+    this.last_mounted = null;
+    this._appNotices = {};
+  }
+
+  _monitorDirectory(directory) {
+    try {
+      return directory.monitor(Gio.FileMonitorFlags.WATCH_MOVES, null);
+    } catch (error) {
+      // Missing XDG folders and unavailable GVfs backends must not abort enable.
+      console.warn(`Unable to monitor ${directory.get_uri()}: ${error.message}`);
+      return null;
+    }
+  }
+
+  needsUpdates() {
+    return this.nextUpdateDelay() !== null;
+  }
+
+  nextUpdateDelay() {
+    if (!this._enabled) return null;
+    const delays = this._services.filter((service) => this._serviceEnabled(service))
+      .map((service) => Math.max(1, service._interval - service._ticks));
+    return delays.length ? Math.min(...delays) : null;
+  }
+
+  _serviceEnabled(service) {
+    switch (service.name) {
+      case 'trash': return this.extension.trash_icon && !this._trashMonitor;
+      case 'clock': return this.extension.clock_icon;
+      case 'calendar': return this.extension.calendar_icon;
+      default: return false;
+    }
+  }
+
+  setupTrash() {
+    this._trashCancellable?.cancel();
+    this._trashCancellable = null;
+    this._trashCheckPending = false;
+    if (this._trashMonitor) {
+      this._trashMonitor.disconnectObject(this);
+      this._trashMonitor.cancel();
+      this._trashMonitor = null;
+    }
+    this._trashDir = null;
+    if (!this._enabled || !this.extension.trash_icon) return;
+    this.setupTrashIcon();
+    this._trashDir = Gio.File.new_for_uri('trash:///');
+    this._trashMonitor = this._monitorDirectory(this._trashDir);
+    this._trashMonitor?.connectObject('changed', () => this.checkTrash(), this);
+    this.checkTrash();
+  }
+
+  setupDownloads() {
+    if (!this._enabled) return;
+    this._downloadsCancellable?.cancel();
+    this._downloadsCancellable = null;
+    this._downloadsCheckPending = false;
+    this.extension._loTimer?.cancel(this._debounceCheckDownloadsSeq);
+    this._debounceCheckDownloadsSeq = null;
+    this._downloadFiles = [];
+    this._downloadFilesLength = 0;
+    if (this._downloadsMonitor) {
+      this._downloadsMonitor.disconnectObject(this);
+      this._downloadsMonitor.cancel();
+      this._downloadsMonitor = null;
+    }
+    this._downloadsDir = null;
+    if (!this.extension.downloads_icon) return;
+    this._downloadsUserDir = this.extension.downloads_path;
+    if (this._downloadsUserDir && this._downloadsUserDir.trim().length > 0) {
+      let fn = Gio.File.new_for_path(this._downloadsUserDir);
+      if (fn.query_exists(null)) {
+        this._downloadsDir = fn;
+      } else {
+        this._downloadsUserDir = null;
+        this._downloadsDir = this._defaultDownloadsDir();
+      }
     } else {
-      // fallback
+      this._downloadsUserDir = null;
       this._downloadsDir = this._defaultDownloadsDir();
     }
     // keep the downloads item pointing at the folder being listed
@@ -164,19 +260,10 @@ export const Services = class {
       this._downloadsDir.get_path()
     );
 
-    this._downloadsMonitor = this._downloadsDir.monitor(
-      Gio.FileMonitorFlags.WATCH_MOVES,
-      null
-    );
-    this._downloadsMonitor.connectObject(
+    this._downloadsMonitor = this._monitorDirectory(this._downloadsDir);
+    this._downloadsMonitor?.connectObject(
       'changed',
       (fileMonitor, file, otherFile, eventType) => {
-        switch (eventType) {
-          // wait for CHANGES_DONE_HINT; a file moved in gets no other event
-          case Gio.FileMonitorEvent.CHANGED:
-          case Gio.FileMonitorEvent.CREATED:
-            return;
-        }
         this._debounceCheckDownloads();
       },
       this
@@ -196,7 +283,7 @@ export const Services = class {
   }
 
   _onMountAdded(monitor, mount) {
-    if (!this.extension.mounted_icon) {
+    if (!this._enabled || !this.extension.mounted_icon) {
       return false;
     }
 
@@ -207,14 +294,22 @@ export const Services = class {
   }
 
   _onMountRemoved(monitor, mount) {
-    let mount_id = tempPath(`${this._mountAppName(mount)}.desktop`);
-    delete this._mounts[mount_id];
+    if (!this._enabled) return;
+    this._deferredMounts = this._deferredMounts.filter((pending) => pending !== mount);
+    this.mounts = (this.mounts ?? []).filter((current) => current !== mount);
+    if (this.last_mounted === mount) this.last_mounted = null;
+    // Drive/volume properties may already have disappeared on an unmount.
+    // Release the stored object instead of deriving its old key from them.
+    for (const [path, current] of Object.entries(this._mounts)) {
+      if (current === mount) delete this._mounts[path];
+    }
     this.extension.animate();
   }
 
   update(elapsed) {
+    if (!this._enabled) return;
     this._services.forEach((s) => {
-      s.update(elapsed);
+      if (this._serviceEnabled(s)) s.update(elapsed);
     });
   }
 
@@ -256,7 +351,8 @@ export const Services = class {
     // the program must exist or Gio refuses to load the desktop file
     let open_app = this.extension.file_explorer();
 
-    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${title}\nExec=${open_app} ${GLib.shell_quote(full_path)}\nIcon=${icon}\nStartupWMClass=${name}-dash2dock-lite\n`;
+    let quoted_path = GLib.shell_quote(full_path).replace(/%/g, '%%');
+    let content = `[Desktop Entry]\nVersion=1.0\nTerminal=false\nType=Application\nName=${title}\nExec=${open_app} ${quoted_path}\nIcon=${icon}\nStartupWMClass=${name}-dash2dock-lite\n`;
     const [, etag] = fn.replace_contents(
       content,
       null,
@@ -267,13 +363,15 @@ export const Services = class {
   }
 
   setupFolderIcons() {
-    this.setupTrashIcon();
-    this.setupFolderIcon(
-      'downloads',
-      'Downloads',
-      'folder-downloads',
-      (this._downloadsDir ?? this._defaultDownloadsDir()).get_path()
-    );
+    // Async configuration may change the opener after these services started.
+    // Refresh their launchers without replacing watchers or restarting scans.
+    if (this.extension.trash_icon && this._trashDir) this.setupTrashIcon();
+    if (this.extension.downloads_icon && this._downloadsDir) {
+      this.setupFolderIcon(
+        'downloads', 'Downloads', 'folder-downloads', this._downloadsDir.get_path()
+      );
+    }
+    if (!this.extension.documents_icon) return;
     this.setupFolderIcon(
       'documents',
       'Documents',
@@ -324,9 +422,9 @@ export const Services = class {
       icon =
         this.extension.lookup_icon_from_names(mount.get_icon().names) ?? icon;
     }
-    let open_exec = `${this.extension.file_opener()} ${target}`;
+    let open_exec = `${this.extension.file_opener()} ${target}`.replace(/%/g, '%%');
     let mount_exec = 'echo "not implemented"';
-    let unmount_exec = `${firstInstalledCommand(['gio mount -u', 'umount'])} ${target}`;
+    let unmount_exec = `${firstInstalledCommand(['gio mount -u', 'umount'])} ${target}`.replace(/%/g, '%%');
     let mount_id = tempPath(`${appname}.desktop`);
     let fn = Gio.File.new_for_path(mount_id);
 
@@ -343,16 +441,36 @@ export const Services = class {
     this._mounts[mount_id] = mount;
   }
 
+  _setupNotifications() {
+    this._notificationSources = new Set();
+    Main.messageTray.connectObject(
+      'source-added', (tray, source) => {
+        this._trackNotificationSource(source);
+        this.checkNotifications();
+      },
+      'source-removed', (tray, source) => {
+        if (this._notificationSources.delete(source)) source.disconnectObject(this);
+        this.checkNotifications();
+      },
+      this
+    );
+    for (const source of Main.messageTray.getSources()) this._trackNotificationSource(source);
+    this.checkNotifications();
+  }
+
+  _trackNotificationSource(source) {
+    if (this._notificationSources.has(source)) return;
+    this._notificationSources.add(source);
+    source.connectObject('notify::count', () => this.checkNotifications(), this);
+  }
+
   checkNotifications() {
+    if (!this._enabled) return;
     if (this._disableNotifications > 4) return;
 
     let sources = Main.messageTray.getSources();
-    this._appNotices = this._appNotices || {};
-
-    Object.keys(this._appNotices).forEach((k) => {
-      this._appNotices[k].previous = this._appNotices[k].count;
-      this._appNotices[k].count = 0;
-    });
+    const previous = this._appNotices ?? {};
+    const notices = {};
 
     let app_map = {
       'org.gnome.Evolution-alarm-notify.desktop': 'org.gnome.Calendar.desktop',
@@ -376,32 +494,28 @@ export const Services = class {
       // remap
       appId = app_map[appId] || appId;
 
-      if (!this._appNotices[appId]) {
-        this._appNotices[appId] = {
+      if (!appId.endsWith('.desktop')) appId += '.desktop';
+      if (!notices[appId]) {
+        notices[appId] = {
           count: 0,
-          previous: 0,
+          previous: previous[appId]?.count ?? 0,
           urgency: 0,
-          source: source,
         };
       }
-      this._appNotices[appId].count = source.count;
-      this._appNotices[`${appId}`] = this._appNotices[appId];
-      if (!appId.endsWith('desktop')) {
-        this._appNotices[`${appId}.desktop`] = this._appNotices[appId];
-      }
+      notices[appId].count += source.count;
     });
 
     let hasUpdates = false;
-    Object.keys(this._appNotices).forEach((k) => {
-      if (this._appNotices[k].previous != this._appNotices[k].count) {
+    for (const key of new Set([...Object.keys(previous), ...Object.keys(notices)])) {
+      if ((previous[key]?.count ?? 0) !== (notices[key]?.count ?? 0)) {
         hasUpdates = true;
       }
-    });
+    }
 
     let update = {};
-    Object.keys(this._appNotices).forEach((k) => {
-      if (this._appNotices[k].count > 0) {
-        update[k] = this._appNotices[k];
+    Object.keys(notices).forEach((k) => {
+      if (notices[k].count > 0) {
+        update[k] = notices[k];
       }
     });
     this._appNotices = update;
@@ -411,250 +525,146 @@ export const Services = class {
     }
   }
 
-  checkTrash() {
-    if (!this.extension.trash_icon) return;
-
-    let prev = this.trashFull;
+  async checkTrash() {
+    if (!this._enabled || !this.extension.trash_icon) return;
+    if (this._trashCancellable) {
+      // A monitor event can arrive after the current scan took its snapshot.
+      // Coalesce these events into one fresh scan once that request closes.
+      this._trashCheckPending = true;
+      return;
+    }
+    this._trashCheckPending = false;
+    const generation = this._generation;
+    const cancellable = new Gio.Cancellable();
+    this._trashCancellable = cancellable;
+    const prev = this.trashFull;
+    let trashFull = false;
+    let iter = null;
     try {
-      let iter = this._trashDir.enumerate_children(
-        'standard::*',
-        Gio.FileQueryInfoFlags.NONE,
-        null
-      );
-      this.trashFull = iter.next_file(null) != null;
+      iter = await enumerateChildren(this._trashDir, Gio.FILE_ATTRIBUTE_STANDARD_NAME, cancellable);
+      trashFull = (await nextFiles(iter, 1, cancellable)).length > 0;
     } catch (err) {
       // trash:/// is unavailable without gvfs; this runs from enable()
-      this.trashFull = false;
+    } finally {
+      await closeEnumerator(iter);
+      if (this._trashCancellable === cancellable) this._trashCancellable = null;
     }
-    if (prev != this.trashFull) {
+    if (!this._enabled || generation !== this._generation || cancellable.is_cancelled()) return;
+    this.trashFull = trashFull;
+    if (prev !== trashFull) {
       this.extension.animate({ refresh: true });
     }
+    if (this._trashCheckPending) return this.checkTrash();
     return this.trashFull;
   }
 
-  async checkRecentFilesInFolder(path) {
-    console.log(`checking ${path}`);
+  async checkRecentFilesInFolder(path, cancellable = null) {
     let maxs = [5, 8, 10, 12, 15, 20, 25];
-    let max_recent_items = maxs[this.extension.max_recent_items || 0];
+    let max_recent_items = maxs[this.extension.max_recent_items || 0] ?? maxs[0];
     let downloadFiles = [];
     let downloadFilesLength = 0;
 
     let directory = Gio.File.new_for_path(path);
-    let enumerator = directory.enumerate_children(
-      [
-        Gio.FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
-        Gio.FILE_ATTRIBUTE_STANDARD_NAME,
-        Gio.FILE_ATTRIBUTE_STANDARD_ICON,
-        Gio.FILE_ATTRIBUTE_TIME_MODIFIED,
-      ].join(','),
-      Gio.FileQueryInfoFlags.NONE,
-      null
-    );
-
-    let fileInfo;
-    while ((fileInfo = enumerator.next_file(null)) !== null) {
-      let fileName = fileInfo.get_name();
-      let fileModified = fileInfo.get_modification_time();
-
-      let icon = 'file';
-      if (fileInfo.get_icon() && fileInfo.get_icon().names) {
-        icon =
-          this.extension.lookup_icon_from_names(fileInfo.get_icon().names) ??
-          icon;
-      }
-
-      downloadFiles.push({
-        index: 0,
-        name: fileName,
-        display: fileName,
-        icon: icon,
-        type: fileInfo.get_content_type(),
-        path: [path, fileName].join('/'),
-        date: fileModified ?? { tv_sec: 0 },
-        fileInfo: fileInfo,
-      });
-    }
-
-    downloadFilesLength = downloadFiles.length;
-    downloadFiles.sort((a, b) => {
-      return a.date.tv_sec > b.date.tv_sec ? -1 : 1;
-    });
-
-    let index = 0;
-    downloadFiles.forEach((f) => {
-      f.index = index++;
-    });
-
-    downloadFiles.splice(max_recent_items);
-    // console.log(downloadFiles);
-
-    return Promise.resolve([downloadFiles, downloadFilesLength]);
-  }
-
-  /*
-  async _checkRecentFilesInFolder(path) {
-    console.log(`checking ${path}`);
-    let maxs = [5, 10, 15, 20, 25];
-    let max_recent_items = maxs[this.extension.max_recent_items || 0];
-
-    let downloadFiles = [];
-    let downloadFilesLength = 0;
+    let enumerator = null;
     try {
-      let [res, pid, in_fd, out_fd, err_fd] = GLib.spawn_async_with_pipes(
-        null,
-        ['/bin/ls', '-1t', `${path}`],
-        null,
-        0,
-        null
+      enumerator = await enumerateChildren(directory,
+        [
+          Gio.FILE_ATTRIBUTE_STANDARD_NAME,
+          Gio.FILE_ATTRIBUTE_TIME_MODIFIED,
+        ].join(','),
+        cancellable
       );
-
-      let out_reader = new Gio.DataInputStream({
-        base_stream: new Gio.UnixInputStream({ fd: out_fd }),
-      });
-
-      let idx = 0;
-      for (let i = 0; i < 100 && idx < 30; i++) {
-        let [line, size] = out_reader.read_line_utf8(null);
-        if (line == null) break;
-        // const res =
-        //   /\s([a-zA-Z]{3})\s{1,3}([0-9]{1,3})\s{1,3}([0-9:]{4,8})\s{1,3}(.*)/.exec(
-        //     line
-        //   );
-        // if (res) {
-        let fileName = line.trim();
-        const fileStat = {
-          name: fileName,
-        };
-        if (fileStat.name && (fileStat.name == '.' || fileStat.name == '..'))
-          continue;
-        fileStat.index = idx++;
-
-        const file = Gio.File.new_for_path(`Downloads/${fileName}`);
-        const fileInfo = file.query_info(
-          'standard::*,unix::uid',
-          Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-          null
-        );
-
-        if (file && fileInfo && fileStat.index < max_recent_items) {
+      while (true) {
+        const files = await nextFiles(enumerator, 64, cancellable);
+        if (!files.length) break;
+        for (const fileInfo of files) {
+          const fileName = fileInfo.get_name();
+          downloadFilesLength++;
           downloadFiles.push({
-            index: fileStat.index,
-            name: fileStat.name,
-            display: fileInfo.get_display_name(),
-            path: file.get_path(),
-            icon: this.extension.lookup_icon_from_names(fileInfo.get_icon().get_names()) ?? 'file',
-            type: fileInfo.get_content_type(),
-            date: fileStat.date ?? '',
+            index: 0,
+            name: fileName,
+            display: fileName,
+            path: [path, fileName].join('/'),
+            date: { tv_sec: fileInfo.get_attribute_uint64(Gio.FILE_ATTRIBUTE_TIME_MODIFIED) },
           });
         }
-        downloadFilesLength++;
-        // }
+        // Only retain the requested newest files, even for enormous folders.
+        downloadFiles.sort((a, b) => b.date.tv_sec - a.date.tv_sec || a.name.localeCompare(b.name));
+        downloadFiles.splice(max_recent_items);
       }
-    } catch (err) {
-      console.log(err);
+    } finally {
+      await closeEnumerator(enumerator);
+    }
+    for (const [index, f] of downloadFiles.entries()) {
+      f.index = index;
+      f.icon = 'file';
+      f.type = null;
+      try {
+        // Content type and icon discovery may inspect each file. Only request
+        // that metadata for the few rows the user will actually see.
+        const info = await queryInfo(directory.get_child(f.name),
+          [Gio.FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, Gio.FILE_ATTRIBUTE_STANDARD_ICON].join(','),
+          cancellable);
+        f.type = info.get_content_type();
+        f.icon = this.extension.lookup_icon_from_names(info.get_icon()?.names ?? []) ?? 'file';
+      } catch (error) {
+        if (cancellable?.is_cancelled()) throw error;
+        // A download may be moved or removed while its folder is being read.
+      }
     }
 
     return [downloadFiles, downloadFilesLength];
   }
-  */
-
-  async checkRecentFilesFromRecentManager() {
-    console.log('checking recent manager');
-    let maxs = [5, 8, 10, 12, 15, 20, 25];
-    let max_recent_items = maxs[this.extension.max_recent_items || 0];
-
-    let recentFiles = [];
-    let recentFilesLength = 0;
-
-    try {
-      await trySpawnCommandLine(
-        `/usr/bin/env -S gjs -m "${this.extension.path}/apps/recents.js"`
-      );
-    } catch (err) {
-      console.log(err);
-    }
-
-    // const recentsPath = tempPath('recents.txt');
-    const recentsPath = '/tmp/recents.txt';
-
-    let fn = Gio.File.new_for_path(recentsPath);
-    if (fn.query_exists(null)) {
-      try {
-        const [success, contents] = await fn.load_contents_async(null);
-        const decoder = new TextDecoder();
-        let contentsString = decoder.decode(contents);
-        let idx = 0;
-        let lines = contentsString.split('\n');
-        lines.forEach((l) => {
-          let res = l.split('|');
-          if (res.length != 2) return;
-          const file = Gio.File.new_for_path(res[0]);
-          if (!file.query_exists(null)) {
-            console.log('not exists');
-            return;
-          }
-          if (recentFiles.length < max_recent_items) {
-            const fileStat = {
-              index: idx++,
-              name: file.get_basename(),
-              icon: res[1],
-              // icon: this.extension.lookup_icon_from_names([res[1]]) ?? 'file',
-              path: file.get_path(),
-              type: 'file',
-            };
-            recentFiles.push(fileStat);
-          }
-          recentFilesLength++;
-        });
-      } catch (err) {
-        console.log(err);
-      }
-    }
-
-    return Promise.resolve([recentFiles, recentFilesLength]);
-  }
-
-  async checkRecents() {
-    // NOT YET READY
-    // try {
-    //   [this._recentFiles, this._recentFilesLength] =
-    //     await this.checkRecentFilesFromRecentManager();
-    // } catch (err) {
-    //   console.log(err);
-    // }
-  }
-
-  _debounceCheckRecents() {
-    if (this.extension._loTimer) {
-      if (!this._debounceCheckRecentsSeq) {
-        this._debounceCheckRecentsSeq = this.extension._loTimer.runDebounced(
-          () => {
-            this.checkRecents();
-          },
-          DEBOUNCE_CHECK_TIMEOUT,
-          'debounceCheckRecents'
-        );
-      } else {
-        this.extension._loTimer.runDebounced(this._debounceCheckRecentsSeq);
-      }
-    }
-  }
 
   async checkDownloads() {
-    try {
-      let path = this._downloadsDir.get_path();
-      [this._downloadFiles, this._downloadFilesLength] =
-        await this.checkRecentFilesInFolder(path);
-    } catch (err) {
-      console.log(err);
+    if (!this._enabled || !this.extension.downloads_icon || !this._downloadsDir) return;
+    if (this._downloadsCancellable) {
+      this._downloadsCheckPending = true;
+      return;
     }
+    this._downloadsCheckPending = false;
+    this.extension._loTimer?.cancel(this._debounceCheckDownloadsSeq);
+    this._debounceCheckDownloadsSeq = null;
+    const generation = this._generation;
+    const directory = this._downloadsDir;
+    const cancellable = new Gio.Cancellable();
+    this._downloadsCancellable = cancellable;
+    try {
+      const [files, count] = await this.checkRecentFilesInFolder(directory.get_path(), cancellable);
+      if (!this._enabled || !this.extension.downloads_icon || generation !== this._generation ||
+          this._downloadsDir !== directory || cancellable.is_cancelled()) return;
+      const previous = this._downloadFiles ?? [];
+      const changed = count !== this._downloadFilesLength || files.length !== previous.length ||
+        files.some((file, index) => {
+          const old = previous[index];
+          return file.path !== old.path || file.date?.tv_sec !== old.date?.tv_sec ||
+            file.icon !== old.icon || file.type !== old.type;
+        });
+      if (changed) {
+        this._downloadFiles = files;
+        this._downloadFilesLength = count;
+        this.extension.animate();
+      }
+    } catch (err) {
+      if (!cancellable.is_cancelled()) console.log(err);
+    } finally {
+      if (this._downloadsCancellable === cancellable) this._downloadsCancellable = null;
+    }
+    if (this._enabled && generation === this._generation && !cancellable.is_cancelled() &&
+        this._downloadsCheckPending) return this.checkDownloads();
   }
 
   _debounceCheckDownloads() {
+    if (!this._enabled || !this.extension.downloads_icon) return;
+    if (this._downloadsCancellable) {
+      this._downloadsCheckPending = true;
+      return;
+    }
     if (this.extension._loTimer) {
       if (!this._debounceCheckDownloadsSeq) {
         this._debounceCheckDownloadsSeq = this.extension._loTimer.runDebounced(
           () => {
+            this._debounceCheckDownloadsSeq = null;
             this.checkDownloads();
           },
           DEBOUNCE_CHECK_TIMEOUT,
@@ -688,9 +698,22 @@ export const Services = class {
   }
 
   checkMounts() {
+    if (!this._enabled) return;
+    this._deferredMounts = [];
     if (!this.extension.mounted_icon) {
-      this._mounts = [];
+      this._volumeMonitor?.disconnectObject(this);
+      this._volumeMonitor = null;
+      this._mounts = {};
+      this.mounts = [];
+      this.last_mounted = null;
       return;
+    }
+    if (!this._volumeMonitor) {
+      this._volumeMonitor = Gio.VolumeMonitor.get();
+      this._volumeMonitor.connectObject(
+        'mount-added', this._onMountAdded.bind(this),
+        'mount-removed', this._onMountRemoved.bind(this), this
+      );
     }
 
     let mounts = this._volumeMonitor.get_mounts() || [];
@@ -749,7 +772,7 @@ export const Services = class {
         }
         if (clock) {
           clock._icon = icon;
-          clock.width = item._renderer.width * item._renderer.scaleX;
+          clock.width = item._renderer.width * item._renderer.scale_x;
           clock.height = clock.width;
           // let toScale = item._scale;
           // clock.set_scale(toScale, toScale);
@@ -764,7 +787,8 @@ export const Services = class {
       } else {
         let clock = item._clock;
         item._icon.visible = true;
-        clock?.hide();
+        item._renderer.opacity = 255;
+        clock?.destroy();
       }
     }
 
@@ -782,7 +806,7 @@ export const Services = class {
         }
         if (calendar) {
           calendar._icon = icon;
-          calendar.width = item._renderer.width * item._renderer.scaleX;
+          calendar.width = item._renderer.width * item._renderer.scale_x;
           calendar.height = calendar.width;
           // let toScale = item._scale;
           // calendar.set_scale(toScale, toScale);
@@ -797,7 +821,8 @@ export const Services = class {
       } else {
         let calendar = item._calendar;
         item._icon.visible = true;
-        calendar?.hide();
+        item._renderer.opacity = 255;
+        calendar?.destroy();
       }
     }
   }

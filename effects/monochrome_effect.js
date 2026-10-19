@@ -20,6 +20,8 @@ void main() {
 }
 `;
 
+let cachedShaderPath;
+let cachedShaderSource;
 const getMonochromeShaderSource = (extensionDir) => {
   const SHADER_PATH = GLib.build_filenamev([
     extensionDir,
@@ -27,8 +29,11 @@ const getMonochromeShaderSource = (extensionDir) => {
     'monochrome_effect.glsl',
   ]);
 
+  if (cachedShaderPath === SHADER_PATH) return cachedShaderSource;
   try {
-    return Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderSource = Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderPath = SHADER_PATH;
+    return cachedShaderSource;
   } catch (e) {
     log(`[d2dl] error loading shader from ${SHADER_PATH}: ${e}`);
     return null;
@@ -47,7 +52,7 @@ const getMonochromeShaderSource = (extensionDir) => {
 const D2DAMonochromeEffectBase = GObject.registerClass(
   {},
   class D2DAMonochromeEffect extends Clutter.ShaderEffect {
-    _init(params) {
+    _init(params = {}) {
       this._red = null;
       this._green = null;
       this._blue = null;
@@ -57,10 +62,9 @@ const D2DAMonochromeEffectBase = GObject.registerClass(
 
       // initialize without color as a parameter
 
-      let _color = params.color;
-      delete params.color;
+      const { color: _color, ...effectParams } = params;
 
-      super._init(params);
+      super._init(effectParams);
 
       // set shader color
       if (_color) this.color = _color;
@@ -69,8 +73,10 @@ const D2DAMonochromeEffectBase = GObject.registerClass(
     preload(path) {
       // set shader source
       this._source = getMonochromeShaderSource(path);
-      if (this._source && !USE_SNIPPET)
+      if (this._source && !USE_SNIPPET) {
         this.set_shader_source(legacyShaderSource(this._source));
+        this.set_uniform_value('tex', 0);
+      }
 
       this.update_enabled();
     }
@@ -151,14 +157,6 @@ const D2DAMonochromeEffectBase = GObject.registerClass(
       this.set_enabled(this.blend > 0 && this._static && !!this._source);
     }
 
-    vfunc_paint_target(paint_node = null, paint_context = null) {
-      if (!USE_SNIPPET) this.set_uniform_value('tex', 0);
-
-      if (paint_node && paint_context)
-        super.vfunc_paint_target(paint_node, paint_context);
-      else if (paint_node) super.vfunc_paint_target(paint_node);
-      else super.vfunc_paint_target();
-    }
   }
 );
 
@@ -171,7 +169,7 @@ export const MonochromeEffect = USE_SNIPPET
         vfunc_get_static_snippet() {
           return Cogl.Snippet.new(
             Cogl.SnippetHook.FRAGMENT,
-            this._source,
+            this._source || 'vec4 d2da_effect(vec4 color) { return color; }',
             'cogl_color_out = d2da_effect(cogl_color_out);'
           );
         }

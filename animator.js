@@ -1,15 +1,9 @@
 'use strict';
 
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import St from 'gi://St';
-import Graphene from 'gi://Graphene';
-import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
-const Point = Graphene.Point;
 
 import { Dot } from './apps/dot.js';
 import { DockPosition } from './dock.js';
-import { Vector } from './vector.js';
 
 import { DockItemDotsOverlay, DockItemBadgeOverlay } from './dockItems.js';
 import {
@@ -18,12 +12,6 @@ import {
   CubicEaseOut,
   QuadraticEaseOut,
 } from './effects/easing.js';
-import {
-  get_distance_sqr,
-  get_distance,
-  isInRect,
-  isOverlapRect,
-} from './utils.js';
 
 const ANIM_POSITION_PER_SEC = 550 / 1000;
 const ANIM_SIZE_PER_SEC = 250 / 1000;
@@ -36,6 +24,9 @@ const DOT_CANVAS_SIZE = 96;
 
 export let Animator = class {
   enable() {
+    if (this._enabled) return;
+    this._enabled = true;
+    this._bounceTargets = new Map();
     if (!this._renderers) {
       this._renderers = [];
       this._dots = [];
@@ -45,12 +36,21 @@ export let Animator = class {
   }
 
   disable() {
+    this._enabled = false;
+    this.cancelAnimations();
     if (this._target) {
       this._target.destroy_all_children();
     }
     this._renderers = [];
     this._dots = [];
     this._badges = [];
+    this._target = null;
+    this._dwellIcon = null;
+    this._dwellTick = 0;
+    this._bms = null;
+    this._blur_effects = null;
+    this._bmsLayout = null;
+    this._computed = null;
   }
 
   _precreateResources(dock) {
@@ -58,8 +58,8 @@ export let Animator = class {
       return false;
     }
 
-    let count = dock._icons.length;
-    if (dock.renderArea.get_children().length == 0) {
+    let count = dock._icons.filter(icon => icon._icon).length;
+    if (dock.renderArea.get_n_children() === 0) {
       this._renderers = [];
       this._dots = [];
       this._badges = [];
@@ -72,38 +72,45 @@ export let Animator = class {
       let renderer = new St.Icon({
         icon_name: 'file',
         name: 'd2daIcon',
-        reactive: true,
+        reactive: false,
         icon_size: 24,
       });
       renderer.visible = false;
       target.add_child(renderer);
       this._renderers.push(renderer);
 
-      // dot
-      let dots = new DockItemDotsOverlay(new Dot(DOT_CANVAS_SIZE));
-      dots.visible = false;
-      target.add_child(dots);
-      this._dots.push(dots);
-
-      // badges
-      let badge = new DockItemBadgeOverlay(new Dot(DOT_CANVAS_SIZE));
-      badge.visible = false;
-      target.add_child(badge);
-      this._badges.push(badge);
+      // Most pinned apps have neither windows nor notifications. Allocate
+      // their Cairo surfaces only when an indicator actually has content.
+      this._dots.push(null);
+      this._badges.push(null);
     }
 
-    for (let i = dock._icons.length; i < this._renderers.length; i++) {
-      this._renderers[i].visible = false;
-      this._dots[i].visible = false;
-      this._badges[i].visible = false;
+    while (this._renderers.length > count) {
+      this._renderers.pop().destroy();
+      this._dots.pop()?.destroy();
+      this._badges.pop()?.destroy();
     }
 
     return true;
   }
 
+  _getOverlay(pool, index, Overlay) {
+    if (!pool[index]) {
+      const overlay = new Overlay(new Dot(DOT_CANVAS_SIZE));
+      overlay.reactive = false;
+      this._target.add_child(overlay);
+      pool[index] = overlay;
+    }
+    return pool[index];
+  }
+
   //! begin optimization
   animate(dt) {
     let dock = this.dock;
+    if (!this._enabled || !dock || dock._destroyed || !dock.dash) {
+      return;
+    }
+    dt = Number.isFinite(dt) ? Math.max(1, Math.min(dt, 100)) : 15;
     if (dock._hoveredIcon) {
       dock._lastHoveredIcon = dock._hoveredIcon;
     }
@@ -111,7 +118,6 @@ export let Animator = class {
     let simulation = false;
 
     if (!dock.layout()) {
-      console.log('unable to layout()');
       return;
     }
 
@@ -124,16 +130,13 @@ export let Animator = class {
     if (dock.opacity < 255) {
       let opacityPerSecond = 255 / 500;
       didFadeIn = true;
-      let dst = 255 - dock.opacity;
-      let mag = Math.abs(dst);
-      let dir = Math.sign(dst);
-      if (opacityPerSecond > mag / dt) {
-        opacityPerSecond = mag / dt;
-      }
-      dock.opacity += Math.floor(opacityPerSecond * dt * dir);
+      let step = Math.max(1, Math.round(opacityPerSecond * dt));
+      dock.opacity = Math.min(255, dock.opacity + step);
       if (dock.renderArea.opacity < 255 && dock.opacity > 50) {
         dock.renderArea.opacity = dock.opacity;
       }
+    } else if (dock.renderArea.opacity < 255) {
+      dock.renderArea.opacity = 255;
     }
 
     let m = dock.getMonitor();
@@ -163,18 +166,21 @@ export let Animator = class {
     let vertical = dock.isVertical();
     let isWithin = dock._isWithinDash([px, py]);
 
-    if (m.inFullscreen) {
+    if (m.inFullscreen && !dock.extension._inOverview) {
       isWithin = false;
     }
 
     let animated = isWithin;
     dock.animated = animated;
 
-    let animateIcons = dock._icons;
+    let animateIcons = dock._icons.filter(icon => icon._icon);
     let iconSize = dock._iconSizeScaledDown;
     let scaleFactor = dock._scaleFactor;
+    if (!Number.isFinite(iconSize) || iconSize <= 0 ||
+        !Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+      return;
+    }
 
-    let nearestIdx = -1;
     let nearestIcon = null;
     let nearestDistance = -1;
 
@@ -193,14 +199,12 @@ export let Animator = class {
         dock._maybeBounce(icon, true);
       }
 
-      icon._pos = [...pos];
-      icon._fixedPosition = [...pos];
+      icon._pos = pos;
 
       // get nearest
-      let bposcenter = [...pos];
-      bposcenter[0] += iconCenterOffset;
-      bposcenter[1] += iconCenterOffset;
-      let dst = get_distance_sqr(pointer, bposcenter);
+      const dx = pos[0] + iconCenterOffset - px;
+      const dy = pos[1] + iconCenterOffset - py;
+      const dst = dx * dx + dy * dy;
 
       if (
         isWithin &&
@@ -209,11 +213,9 @@ export let Animator = class {
       ) {
         nearestDistance = dst;
         nearestIcon = icon;
-        nearestIdx = idx;
         icon._distance = dst;
       }
 
-      icon._target = pos;
       icon._targetScale = 1;
 
       icon._idx = idx++;
@@ -261,15 +263,9 @@ export let Animator = class {
       edge_distance = 0;
     }
 
-    let total_scale = 0;
-    let did_scale_count = 0;
-
     // animate
-    let firstIcon = null;
-    let lastIcon = null;
-    let iconTable = [];
+    const iconTable = animateIcons;
 
-    let scaleAtMin = 1;
     let scaleAtMax = 1;
     if (magnify != 0) {
       scaleAtMax = 1 + magnify;
@@ -282,23 +278,13 @@ export let Animator = class {
 
     animateIcons.forEach((icon) => {
       if (!icon._icon) return;
-      let original_pos = [...icon._pos];
-
-      // used by background resizing and repositioning
-      icon._fixedPosition = [...original_pos];
+      let original_pos = icon._pos;
 
       original_pos[0] += icon.width / 2;
       original_pos[1] += icon.height / 2;
 
-      icon._pos = [...original_pos];
       icon._translate = 0;
       icon._translateRise = 0;
-
-      iconTable.push(icon);
-      if (firstIcon == null) {
-        firstIcon = icon;
-      }
-      lastIcon = null;
 
       let scale = 1;
       let dx = original_pos[0] - px;
@@ -325,10 +311,6 @@ export let Animator = class {
         // let sz = iconSize * fp * scaleFactor;
         let sz = iconSize * (scale - 1) * scaleFactor;
         icon._translateRise = sz * rise;
-        didScale = true;
-
-        total_scale += scale;
-        did_scale_count += 1;
       }
 
       icon._scale = scale;
@@ -359,9 +341,7 @@ export let Animator = class {
     let largestIconScale = 1;
 
     //! use better collision test here?
-    let total_spread_left = 0;
-    let total_spread_right = 0;
-    let hoveredIcon = dock._lastHoveredIcon;
+    let hoveredIcon = nearestIcon ?? dock._lastHoveredIcon;
     for (let i = 0; i < iconTable.length; i++) {
       if (iconTable.length < 2) break;
       let icon = iconTable[i];
@@ -385,13 +365,11 @@ export let Animator = class {
         for (let j = i - 1; j >= 0; j--) {
           let left = iconTable[j];
           left._translate -= offset;
-          total_spread_left += offset;
         }
         // right
         for (let j = i + 1; j < iconTable.length; j++) {
           let right = iconTable[j];
           right._translate += offset;
-          total_spread_right += offset;
         }
       }
     }
@@ -400,7 +378,7 @@ export let Animator = class {
     dock._hoveredIcon = hoveredIcon;
     let TRANSLATE_COEF = 24;
     if (nearestIcon) {
-      nearestIcon._targetScale += 0.1;
+      if (magnify > 0) nearestIcon._targetScale += 0.1;
       let adjust = nearestIcon._translate / 2;
       animateIcons.forEach((icon) => {
         if (!icon._icon) return;
@@ -422,12 +400,19 @@ export let Animator = class {
     let last = animateIcons[animateIcons.length - 1];
 
     let slowDown = dock.extension._config.speed_up || 1;
-    if (!didScale) {
+    let hasZoom = animateIcons.some((icon) => {
+      let currentScale = icon._icon?.scale_x ?? 1;
+      let tx = Math.abs(icon._icon?.translation_x ?? 0);
+      let ty = Math.abs(icon._icon?.translation_y ?? 0);
+      return Math.abs(currentScale - 1) > 0.01 ||
+        Math.abs(icon._targetScale - 1) > 0.01 || tx > 0.5 || ty > 0.5;
+    });
+    if (!hasZoom) {
       slowDown = 0.5;
     }
 
     let lockPosition =
-      didScale && first && last && first._p == 0 && last._p == 0;
+      nearestIcon && first && last && first._p == 0 && last._p == 0;
 
     if (dock._preview) {
       lockPosition = false;
@@ -459,26 +444,20 @@ export let Animator = class {
       //-------------------
       {
         let speed = ANIM_POSITION_PER_SEC * slowDown;
-        let targetPosition = new Vector([translationX, translationY, 0]);
-        let currentPosition = new Vector([
-          icon._icon.translationX,
-          icon._icon.translationY,
-          0,
-        ]);
-        let dst = targetPosition.subtract(currentPosition);
-        let mag = dst.magnitude();
-        if (mag > 0) {
-          dst = dst.normalize();
+        if (!Number.isFinite(translationX)) translationX = 0;
+        if (!Number.isFinite(translationY)) translationY = 0;
+        let cx = icon._icon?.translation_x ?? 0;
+        let cy = icon._icon?.translation_y ?? 0;
+        if (!Number.isFinite(cx)) cx = 0;
+        if (!Number.isFinite(cy)) cy = 0;
+        const dx = translationX - cx;
+        const dy = translationY - cy;
+        const distance = Math.hypot(dx, dy);
+        const step = speed * dt;
+        if (distance > step) {
+          translationX = cx + dx * step / distance;
+          translationY = cy + dy * step / distance;
         }
-        let deltaVector = dst.multiplyScalar(speed * dt);
-        let deltaMag = deltaVector.magnitude();
-        let appliedVector = new Vector([targetPosition.x, targetPosition.y, 0]);
-        if (deltaMag < mag) {
-          appliedVector = currentPosition.add(deltaVector);
-        }
-        translationX = appliedVector.x;
-        translationY = appliedVector.y;
-        icon._deltaVector = appliedVector;
       }
 
       // fix jitterness
@@ -518,25 +497,28 @@ export let Animator = class {
         }
       } else {
         icon._positionCache = null;
+        icon._locked = false;
       }
 
-      if (dock.extension.animation_fps > 0) {
-        icon._icon.translationX = translationX;
-        icon._icon.translationY = translationY;
-      } else {
+      let curX = icon._icon.translation_x ?? 0;
+      let curY = icon._icon.translation_y ?? 0;
+      if (!Number.isFinite(curX)) curX = 0;
+      if (!Number.isFinite(curY)) curY = 0;
+      if (dock.extension.animation_fps <= 0) {
         //! retain this for smoothness at high fps
-        icon._icon.translationX =
-          (icon._icon.translationX + translationX * 3) / 4;
-        icon._icon.translationY =
-          (icon._icon.translationY + translationY * 3) / 4;
+        if (Math.abs(curX - translationX) > 0.01)
+          translationX = (curX + translationX * 3) / 4;
+        if (Math.abs(curY - translationY) > 0.01)
+          translationY = (curY + translationY * 3) / 4;
       }
+      if (Math.abs(curX - translationX) > 0.01 ||
+          Math.abs(curY - translationY) > 0.01) didScale = true;
+      icon._icon.translation_x = translationX;
+      icon._icon.translation_y = translationY;
 
-      // clear bounce animation
-      if (icon._appwell) {
-        icon._appwell.translationY = 0;
-        didBounce = icon._appwell._bounce;
-        // clear bounce
-        icon._appwell._bounce = false;
+      // track bounce animation without clearing prematurely
+      if (icon._appwell?._bounce) {
+        didBounce = true;
       }
     });
 
@@ -590,43 +572,30 @@ export let Animator = class {
 
         icon._renderer = this._renderers[icon._idx];
         icon._renderer._icon = icon._icon;
-        icon._renderer.set_style_class_name('');
+        if (icon._renderer.style_class) {
+          icon._renderer.set_style_class_name('');
+        }
 
         if (!icon._appwell?._bounce) {
-          icon._renderer.translationY = 0;
+          icon._renderer.translation_y = 0;
+          icon._renderer.translation_x = 0;
         }
 
         let renderer = icon._renderer;
         if (gicon) {
           // apply override
-          renderer.gicon = gicon;
+          if (renderer.gicon !== gicon) renderer.gicon = gicon;
 
           // replace PNG with override SVG
-          if (icon._icon.gicon && icon._icon.gicon.file && gicon) {
+          if (icon._icon.gicon && icon._icon.gicon.file && icon._icon.gicon !== gicon) {
             icon._icon.gicon = gicon;
           }
         } else {
           if (icon_name) {
-            renderer.icon_name = icon_name;
+            if (renderer.icon_name !== icon_name) renderer.icon_name = icon_name;
           } else {
-            //! clone
             if (icon._icon.gicon) {
-              let clone = icon._icon.gicon.file;
-              if (
-                renderer.gicon &&
-                renderer.gicon.file &&
-                renderer.gicon.file.get_path() ==
-                  icon._icon.gicon.file.get_path()
-              ) {
-                clone = false;
-              }
-              if (clone) {
-                renderer.gicon = new Gio.FileIcon({
-                  file: icon._icon.gicon.file,
-                });
-              }
-              // #issue 188
-              renderer.gicon = icon._icon.gicon;
+              if (renderer.gicon !== icon._icon.gicon) renderer.gicon = icon._icon.gicon;
             }
           }
         }
@@ -636,7 +605,10 @@ export let Animator = class {
         //-------------------
         let unscaledIconSize = dock._iconSizeScaledDown * scaleFactor;
         let targetSize = unscaledIconSize * icon._targetScale;
-        let currentSize = renderer.icon_size * renderer.scaleX;
+        let currentSize = renderer.icon_size * renderer.scale_x;
+        if (!Number.isFinite(currentSize) || currentSize <= 0) {
+          currentSize = unscaledIconSize;
+        }
         {
           let dst = targetSize - currentSize;
           let mag = Math.abs(dst);
@@ -646,10 +618,11 @@ export let Animator = class {
           let deltaSize = pixelOverTime * dir * dt;
           let appliedSize = deltaSize;
           appliedSize += accel;
-          if (Math.abs(appliedSize) > mag) {
-            appliedSize = dst * 0.5;
+          if (Math.abs(appliedSize) >= mag) {
+            appliedSize = dst;
           }
           targetSize = currentSize + appliedSize;
+          if (mag > 0.25) didScale = true;
           icon._deltaSize = appliedSize;
           icon._targetSize = targetSize;
         }
@@ -662,9 +635,11 @@ export let Animator = class {
           renderer.set_icon_size(baseSize);
         }
         let scaleToTarget = targetSize / baseSize;
-        renderer.set_scale(scaleToTarget, scaleToTarget);
+        if (renderer.scale_x !== scaleToTarget || renderer.scale_y !== scaleToTarget)
+          renderer.set_scale(scaleToTarget, scaleToTarget);
 
-        let p = icon.get_transformed_position();
+        const pX = icon._pos[0] - icon.width / 2;
+        const pY = icon._pos[1] - icon.height / 2;
         let adjustX = icon.width / 2 - targetSize / 2;
         let adjustY = icon.height / 2 - targetSize / 2;
 
@@ -680,41 +655,30 @@ export let Animator = class {
         //-------------------
         // commit position
         //-------------------
-        if (!isNaN(p[0]) && !isNaN(p[1])) {
-          let iconContainer = icon._icon.get_parent();
-          // iconContainer can be null when dragging icons
+        if (Number.isFinite(pX) && Number.isFinite(pY)) {
+          let iconContainer = icon._icon?.get_parent?.();
           if (iconContainer) {
             if (vertical) {
-              iconContainer.translationX = adjustX / 2;
+              iconContainer.translation_x = adjustX / 2;
+              iconContainer.translation_y = 0;
             } else {
-              iconContainer.translationY = adjustY / 2;
+              iconContainer.translation_y = adjustY / 2;
+              iconContainer.translation_x = 0;
             }
-
-            let ry = p[1] + adjustY + icon._icon.translationY - renderOffset[1];
-            renderer.set_position(
-              p[0] + adjustX + icon._icon.translationX - renderOffset[0],
-              ry
-            );
-
-            // renderer.ease({
-            //   x: p[0] + adjustX + icon._icon.translationX - renderOffset[0],
-            //   y: ry,
-            //   duration: 100,
-            //   mode: Clutter.AnimationMode.LINEAR,
-            // });
-
-            // renderer.ease({
-            //   width: baseSize,
-            //   height: baseSize,
-            //   icon_size: baseSize,
-            //   duration: 200,
-            //   mode: Clutter.AnimationMode.LINEAR,
-            // });
-
-            renderer.visible = true;
           }
-          icon._px = p[0] - renderOffset[0];
-          icon._py = p[1] - renderOffset[1];
+
+          let itx = icon._icon?.translation_x ?? 0;
+          let ity = icon._icon?.translation_y ?? 0;
+          if (isNaN(itx)) itx = 0;
+          if (isNaN(ity)) ity = 0;
+
+          let ry = pY + adjustY + ity - renderOffset[1];
+          const rx = pX + adjustX + itx - renderOffset[0];
+          if (renderer.x !== rx || renderer.y !== ry) renderer.set_position(rx, ry);
+
+          renderer.visible = true;
+          icon._px = pX - renderOffset[0];
+          icon._py = pY - renderOffset[1];
         }
 
         let hideLabel = true;
@@ -722,6 +686,7 @@ export let Animator = class {
         // label
         if (
           icon === hoveredIcon &&
+          !dock.extension.hide_labels &&
           icon._label &&
           icon._label.text &&
           icon._label.text.length
@@ -738,11 +703,14 @@ export let Animator = class {
 
           if (this._dwellIcon === icon) {
             this._dwellTick += dt;
+            if (icon._targetScale > 1 && this._dwellTick <= 450)
+              didScale = true;
             if (this._dwellTick > 450 && icon._targetScale > 1) {
               try {
                 hideLabel = false;
                 if (icon._label.opacity < 255 - 25) {
                   icon._label.opacity += 25;
+                  didScale = true;
                 } else {
                   icon._label.opacity = 255;
                 }
@@ -752,6 +720,7 @@ export let Animator = class {
             }
           } else {
             this._dwellTick = 0;
+            if (icon._targetScale > 1) didScale = true;
           }
           this._dwellIcon = icon;
 
@@ -791,102 +760,71 @@ export let Animator = class {
           icon._icon == dock._dragged && dock._dragging ? 75 : 255;
       }
 
-      //! make more readable
-      let flags = {
-        bottom: {
-          x: 0.5,
-          y: 1,
-          lx: 0,
-          ly: 0.5 * icon._targetScale * scaleFactor,
-        },
-        top: {
-          x: 0.5,
-          y: 0,
-          lx: 0,
-          ly: -1.5 * icon._targetScale * scaleFactor,
-        },
-        left: {
-          x: 0,
-          y: 0.5,
-          lx: -1.25 * icon._targetScale * scaleFactor,
-          ly: -1.25,
-        },
-        right: {
-          x: 1,
-          y: 0.5,
-          lx: 1.5 * icon._targetScale * scaleFactor,
-          ly: -1.25,
-        },
-      };
-
-      let posFlags = flags[dock._position];
-
       // badges
       //! ***badge location at scaling is messed up***
-      let badge = this._badges[icon._idx];
-      badge.hide();
-      if (icon != dock._dragged) {
-        let appNotices = icon._appwell
-          ? dock.extension.services._appNotices[icon._appwell.app.get_id()]
-          : null;
-        let noticesCount = 0;
-        if (appNotices) {
-          noticesCount = appNotices.count;
-        }
-        // noticesCount = 1;
-        let target = dock.renderArea;
-        if (badge && noticesCount > 0) {
-          badge.update(icon, {
-            noticesCount,
-            position: dock._position,
-            vertical,
-            extension: dock.extension,
-          });
-          // badge.x = icon._renderer.x + 3 * icon._scale;
-          // badge.y = icon._renderer.y - 3 * icon._scale;
+      const appNotices = icon._appwell
+        ? dock.extension.services?._appNotices?.[icon._appwell.app.get_id()]
+        : null;
+      const noticesCount = appNotices?.count ?? 0;
+      if (icon._icon != dock._dragged && noticesCount > 0) {
+        const badge = this._getOverlay(this._badges, icon._idx, DockItemBadgeOverlay);
+        icon._badge = badge;
+        badge.update(icon, {
+          noticesCount,
+          position: dock._position,
+          vertical,
+          extension: dock.extension,
+        });
+        // badge.x = icon._renderer.x + 3 * icon._scale;
+        // badge.y = icon._renderer.y - 3 * icon._scale;
 
-          // if (dock._position == DockPosition.TOP) {
-          //   badge.y = icon._renderer.y + (icon.height - 6) * icon._scale;
-          // }
+        // if (dock._position == DockPosition.TOP) {
+        //   badge.y = icon._renderer.y + (icon.height - 6) * icon._scale;
+        // }
 
-          badge.width = icon._renderer.width * icon._renderer.scaleX;
-          badge.height = badge.width;
-          badge.x = icon._renderer.x;
-          badge.y = icon._renderer.y;
+        badge.width = icon._renderer.width * icon._renderer.scale_x;
+        badge.height = badge.width;
+        badge.x = icon._renderer.x;
+        badge.y = icon._renderer.y;
 
-          badge.set_scale(icon._scale, icon._scale);
-          badge.show();
-        }
+        badge.set_scale(icon._scale, icon._scale);
+        if (!badge.visible) badge.show();
+      } else {
+        this._badges[icon._idx]?.destroy();
+        this._badges[icon._idx] = null;
+        icon._badge = null;
       }
 
       // dots
       //! ***dot requires a little more aligning at dock position other than bottom***
-      let dots = this._dots[icon._idx];
-      dots.hide();
+      let appCount = 0;
       if (
-        icon != dock._dragged &&
+        icon._icon != dock._dragged &&
         icon._appwell &&
         icon._appwell.app &&
         icon._appwell.app.get_n_windows
       ) {
-        let appCount = dock.getAppWindowsFiltered(icon._appwell.app).length;
-        // appCount = 1;
-        if (dots && appCount > 0) {
-          dots.update(icon, {
-            appCount,
-            position: dock._position,
-            vertical,
-            extension: dock.extension,
-            dock,
-          });
+        appCount = dock.getAppWindowsFiltered(icon._appwell.app).length;
+      }
+      if (appCount > 0) {
+        const dots = this._getOverlay(this._dots, icon._idx, DockItemDotsOverlay);
+        dots.update(icon, {
+          appCount,
+          position: dock._position,
+          vertical,
+          extension: dock.extension,
+          dock,
+        });
 
-          dots.width = icon._renderer.width * icon._renderer.scaleX;
-          dots.height = dots.width;
-          dots.x = icon._renderer.x;
-          dots.y = icon._renderer.y;
-          dots.set_scale(icon._scale, icon._scale);
-          dots.show();
-        }
+        dots.width = icon._renderer.width * icon._renderer.scale_x;
+        dots.height = dots.width;
+        dots.x = icon._renderer.x;
+        dots.y = icon._renderer.y;
+        dots.set_scale(icon._scale, icon._scale);
+        if (!dots.visible) dots.show();
+      } else {
+        this._dots[icon._idx]?.destroy();
+        this._dots[icon._idx] = null;
       }
 
       // custom icons
@@ -904,10 +842,10 @@ export let Animator = class {
       let prev = actor._prev; // get_previous_sibling() || actor._prev;
       let next = actor._next; // get_next_sibling();
       if (prev && next && prev._icon && next._icon) {
-        actor.translationX =
-          (prev._icon.translationX + next._icon.translationX) / 2;
-        actor.translationY =
-          (prev._icon.translationY + next._icon.translationY) / 2;
+        actor.translation_x =
+          (prev._icon.translation_x + next._icon.translation_x) / 2;
+        actor.translation_y =
+          (prev._icon.translation_y + next._icon.translation_y) / 2;
         let thickness = dock.extension.separator_thickness || 0;
         //! use ifs for more readability
         actor.width = !vertical
@@ -921,9 +859,9 @@ export let Animator = class {
 
       let any = next ?? prev;
       if (!vertical && any) {
-        actor.translationY = any.height / 2 - actor.height / 2;
+        actor.translation_y = any.height / 2 - actor.height / 2;
       } else if (vertical && any) {
-        // actor.translationX = any.width / 2 - actor.width / 2;
+        // actor.translation_x = any.width / 2 - actor.width / 2;
       }
     });
 
@@ -983,24 +921,23 @@ export let Animator = class {
         ((150 + 300 * dock.extension.autohide_speed * scaleFactor) / 1000) *
         autohide_slowDown;
 
-      let v1 = new Vector([targetX, targetY, 0]);
-      let v2 = new Vector([dock.dash.translationX, dock.dash.translationY, 0]);
-      let dst = v1.subtract(v2);
-      let mag = dst.magnitude();
-      if (mag > 0) {
-        // let ndst = dst.normalize();
-        let v3 = v2.add(dst.multiplyScalar(speed));
-        translationX = v3.x;
-        translationY = v3.y;
+      const dx = targetX - dock.dash.translation_x;
+      const dy = targetY - dock.dash.translation_y;
+      if (Math.hypot(dx, dy) > 0.5) {
+        translationX = dock.dash.translation_x + dx * speed;
+        translationY = dock.dash.translation_y + dy * speed;
+        didScale = true;
       }
 
-      dock.dash.translationX = translationX;
-      dock.dash.translationY = translationY;
+      dock.dash.translation_x = translationX;
+      dock.dash.translation_y = translationY;
     }
 
     // background
     {
-      dock._background.style = dock.extension._backgroundStyle;
+      if (dock._background.style != dock.extension._backgroundStyle) {
+        dock._background.style = dock.extension._backgroundStyle;
+      }
       dock._background.update({
         first,
         last,
@@ -1014,13 +951,22 @@ export let Animator = class {
 
       // allied areas
       //! this should be at the layout -- make independent of background
+      if (dock.inputArea) {
+        const [inputX, inputY] = dock._background.get_transformed_position();
+        dock.inputArea.x = inputX;
+        dock.inputArea.y = inputY;
+        dock.inputArea.width = dock._background.width;
+        dock.inputArea.height = dock._background.height;
+        dock.inputArea.visible = !dock._hidden && dock._background.opacity > 0;
+      }
+
       // struts
       if (vertical) {
-        dock.struts.width =
+        dock.struts.width = Math.max(0,
           dock._background.width +
           iconSize * 0.2 * scaleFactor +
           edge_distance -
-          dock._background._padding * scaleFactor;
+          dock._background._padding * scaleFactor);
         // reset what autohide or the previous position left behind
         dock.struts.y = dock.y;
         dock.struts.height = dock.height;
@@ -1040,11 +986,11 @@ export let Animator = class {
       } else {
         dock.struts.x = dock.x;
         dock.struts.width = dock.width;
-        dock.struts.height =
+        dock.struts.height = Math.max(0,
           dock._background.height +
           iconSize * 0.2 * scaleFactor +
           edge_distance -
-          dock._background._padding * scaleFactor;
+          dock._background._padding * scaleFactor);
 
         if (dock.extension.autohide_dash) {
           dock.struts.x = dock._background.x + dock._monitor.x;
@@ -1070,161 +1016,106 @@ export let Animator = class {
     // animate the list
     //---------------------
     if (dock._list && dock._list.visible && dock._list._target) {
-      dock._list.animate(dt);
-      didScale = true;
+      didScale = dock._list.animate(dt) || didScale;
     }
 
-    if (didFadeIn || didScale || dock._dragging || didBounce) {
+    if (didFadeIn || didScale || dock._dragging || didBounce || dock._preview) {
       dock.autohider._debounceCheckHide();
       dock._debounceEndAnimation();
+    } else {
+      dock._settleAnimation();
     }
 
     dock.extension.integrations.bms_update_size(this);
   }
 
+  cancelAnimations() {
+    for (const appwell of this._bounceTargets?.keys() ?? []) {
+      this._finishBounce(appwell);
+    }
+    this._dwellIcon = null;
+    this._dwellTick = 0;
+  }
+
+  _finishBounce(appwell, reset = true) {
+    const state = this._bounceTargets?.get(appwell);
+    if (!state) return;
+    this._bounceTargets.delete(appwell);
+    this.extension._hiTimer?.cancel(state.sequence);
+    appwell.disconnect(state.destroyId);
+    if (reset) {
+      appwell._bounce = false;
+      appwell.translation_x = 0;
+      appwell.translation_y = 0;
+      this._translateBounce(state.container, 0, 0);
+    }
+  }
+
+  _translateBounce(container, x, y) {
+    for (const actor of [container._renderer, container._image, container._badge]) {
+      if (!actor) continue;
+      actor.translation_x = x;
+      actor.translation_y = y;
+    }
+    if (container._label) container._label.opacity = 0;
+  }
+
   bounceIcon(appwell) {
-    let dock = this.dock;
-    let app_id = appwell._id;
+    const dock = this.dock;
+    const timer = this.extension._hiTimer;
+    if (!this._enabled || dock._destroyed || !dock.dash || dock._dragging || !timer) {
+      return;
+    }
+    const container = appwell.get_parent();
+    if (!container) return;
+    this._finishBounce(appwell);
 
-    // let scaleFactor = dock.getMonitor().geometry_scale;
-    //! why not scaleFactor?
-    let travel =
-      (dock._iconSize / 3) *
+    const travel = (dock._iconSize / 3) *
       ((0.25 + dock.extension.animation_bounce_height) * 1.5);
-    // * scaleFactor;
-    appwell.translation_y = 0;
+    if (!Number.isFinite(travel) || travel <= 0) return;
 
-    const getTarget = (app_id) => {
-      if (dock._dragging) return [null, null];
-      let icons = dock._findIcons();
-      let icon = icons.find((icon) => {
-        return icon._appwell && icon._appwell._id == app_id;
-      });
-      if (!icon || !icon._appwell) {
-        return [null, null];
+    // Keep one sequence per actor, and release it before the actor's children
+    // are disposed. Looking up an app by a possibly missing _id could animate
+    // a different icon after redisplay or leave _bounce set forever after drag.
+    const state = {container, sequence: null, destroyId: 0};
+    state.destroyId = appwell.connect('destroy', () => {
+      this._finishBounce(appwell, false);
+    });
+    this._bounceTargets.set(appwell, state);
+    appwell._bounce = true;
+
+    const apply = (distance) => {
+      if (!this._enabled || dock._destroyed || dock._dragging) {
+        this._finishBounce(appwell);
+        return;
       }
-      return [icon._appwell.get_parent(), icon._appwell];
-    };
-
-    const translateDecor = (container, appwell) => {
-      try {
-        if (!container._icon) return;
-        if (container._renderer) {
-          container._renderer.translationY = appwell.translationY;
-        }
-        if (container._image) {
-          container._image.translationY = appwell.translationY;
-        }
-        if (container._badge) {
-          container._badge.translationY = appwell.translationY;
-        }
-        if (container._label) {
-          container._label.opacity = 0;
-        }
-      } catch (err) {
-        console.log(err);
+      let x = 0;
+      let y = 0;
+      if (dock.isVertical()) {
+        x = distance * (dock._position === DockPosition.LEFT ? 1 : -1);
+      } else {
+        y = distance * (dock._position === DockPosition.BOTTOM ? -1 : 1);
       }
+      appwell.translation_x = x;
+      appwell.translation_y = y;
+      this._translateBounce(container, x, y);
     };
-
-    let t = 250;
-    let _frames = [
-      {
-        _duration: t,
-        _func: (f, s) => {
-          let res = Linear.easeNone(f._time, 0, travel, f._duration);
-          let [container, appwell] = getTarget(app_id);
-          if (!appwell) return;
-          try {
-            appwell._bounce = true;
-            if (dock.isVertical()) {
-              appwell.translation_x =
-                dock._position == DockPosition.LEFT ? res : -res;
-              if (container._renderer) {
-                container._renderer.translationX = appwell.translationX;
-              }
-            } else {
-              appwell.translation_y =
-                dock._position == DockPosition.BOTTOM ? -res : res;
-              if (container._renderer) {
-                container._renderer.translationY = appwell.translationY;
-              }
-            }
-          } catch (err) {
-            console.log(err);
-          }
-          translateDecor(container, appwell);
-        },
-      },
-      {
-        _duration: t * 3,
-        _func: (f, s) => {
-          let res = Bounce.easeOut(f._time, travel, -travel, f._duration);
-          let [container, appwell] = getTarget(app_id);
-          if (!appwell) return;
-          try {
-            appwell._bounce = true;
-            if (dock.isVertical()) {
-              appwell.translation_x = appwell.translation_x =
-                dock._position == DockPosition.LEFT ? res : -res;
-              if (container._renderer) {
-                container._renderer.translationX = appwell.translationX;
-              }
-            } else {
-              appwell.translation_y =
-                dock._position == DockPosition.BOTTOM ? -res : res;
-              if (container._renderer) {
-                container._renderer.translationY = appwell.translationY;
-              }
-            }
-          } catch (err) {
-            console.log(err);
-          }
-          translateDecor(container, appwell);
-        },
-      },
-    ];
-
-    let frames = [];
-    for (
-      let i = 0;
-      i < [3, 1, 2, 3][dock.extension.animation_bounce_frequency || 0];
-      i++
-    ) {
-      _frames.forEach((b) => {
-        frames.push({
-          ...b,
-        });
+    const frames = [];
+    const frequency = [3, 1, 2, 3][dock.extension.animation_bounce_frequency] ?? 3;
+    for (let i = 0; i < frequency; i++) {
+      frames.push({
+        _duration: 250,
+        _func: frame => apply(Linear.easeNone(frame._time, 0, travel, frame._duration)),
+      }, {
+        _duration: 750,
+        _func: frame => apply(Bounce.easeOut(frame._time, travel, -travel, frame._duration)),
       });
     }
-
-    dock.extension._hiTimer.runAnimation([
-      ...frames,
-      {
-        _duration: 10,
-        _func: (f, s) => {
-          let [container, appwell] = getTarget(app_id);
-          if (!appwell) return;
-          try {
-            appwell._bounce = true;
-            appwell.translation_y = 0;
-          } catch (err) {
-            console.log(err);
-          }
-          translateDecor(container, appwell);
-        },
-      },
-      {
-        _duration: 10,
-        _func: (f, s) => {
-          let [container, appwell] = getTarget(app_id);
-          if (!appwell) return;
-          try {
-            appwell._bounce = false;
-          } catch (err) {
-            console.log(err);
-          }
-        },
-      },
-    ]);
+    frames.push({
+      _duration: 1,
+      _func: () => this._finishBounce(appwell),
+    });
+    state.sequence = timer.runAnimation(frames);
+    dock._beginAnimation();
   }
 };

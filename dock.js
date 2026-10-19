@@ -7,12 +7,15 @@ import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import Shell from 'gi://Shell';
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
 import Graphene from 'gi://Graphene';
 import Meta from 'gi://Meta';
 import St from 'gi://St';
 
-import { Dash } from 'resource:///org/gnome/shell/ui/dash.js';
+import * as DashModule from 'resource:///org/gnome/shell/ui/dash.js';
+const { Dash } = DashModule;
+import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 
 import { TintEffect } from './effects/tint_effect.js';
 import { MonochromeEffect } from './effects/monochrome_effect.js';
@@ -21,6 +24,7 @@ import { DockIcon, DockItemContainer, DockBackground } from './dockItems.js';
 import { DockItemList } from './dockItemMenu.js';
 import { AutoHide } from './autohide.js';
 import { Animator } from './animator.js';
+import { getDropSlot, planFavoriteDrop, resolveFavoriteDrop } from './dragOrder.js';
 import {
   get_distance_sqr,
   get_distance,
@@ -62,9 +66,51 @@ const inputRegionParam = (affectsInputRegion) =>
 // disconnects, so record what it connects and disconnect it ourselves
 const DASH_LEAKS_SIGNALS = parseInt(Config.PACKAGE_VERSION.split('.')[0]) < 49;
 
+// initializeDeferredWork() binds _redisplay during Dash construction. Override
+// it on the class, before that binding happens, so queued work cannot invoke
+// the upstream implementation after the dock has been destroyed.
+const DockDash = GObject.registerClass(
+  class DockDash extends Dash {
+    _redisplay() {
+      if (!this._d2dlDestroying) this._d2dlOwner?._redisplayDash(this);
+    }
+
+    _queueRedisplay() {
+      if (!this._d2dlDestroying) super._queueRedisplay();
+    }
+
+    // Dock.layout owns icon sizing. The stock horizontal sizing code expects
+    // every app's texture to exist, including during style/theme changes.
+    _adjustIconSize() {}
+
+    _syncLabel(item, appIcon) {
+      if (this._d2dlDestroying || item._d2dlDestroying) return;
+      super._syncLabel(item, appIcon);
+    }
+
+    _onItemDragBegin() {
+      if (this._d2dlDestroying) return;
+      if (this._dragMonitor) this._endItemDrag();
+      super._onItemDragBegin();
+      this._d2dlOwner?._setDragState(true);
+    }
+
+    _endItemDrag() {
+      this._clearDragPlaceholder();
+      this._clearEmptyDropTarget();
+      this._showAppsIcon.setDragApp(null);
+      if (this._dragMonitor) {
+        DND.removeDragMonitor(this._dragMonitor);
+        this._dragMonitor = null;
+      }
+      this._d2dlOwner?._setDragState(false);
+    }
+  }
+);
+
 const createTrackedDash = () => {
   if (!DASH_LEAKS_SIGNALS) {
-    return [new Dash(), []];
+    return [new DockDash(), []];
   }
   let connections = [];
   let sources = [
@@ -85,7 +131,10 @@ const createTrackedDash = () => {
     };
   });
   try {
-    return [new Dash(), connections];
+    return [new DockDash(), connections];
+  } catch (error) {
+    for (const [source, id] of connections) source.disconnect(id);
+    throw error;
   } finally {
     saved.forEach(([source, descriptor]) => {
       if (descriptor) {
@@ -96,6 +145,64 @@ const createTrackedDash = () => {
     });
   }
 };
+
+// Root cause of the "logout while reordering pinned icons" crash:
+// when a dash item is destroyed while its icon is hovered, Clutter re-picks
+// synchronously, the parent button gains :hover, its style changes and
+// BaseIcon.vfunc_style_changed() sees an empty _iconBin (the old StIcon was
+// just removed) and calls _createIconTexture() -> a *new* child is added to
+// the bin that clutter_actor_destroy_all_children() is emptying ->
+// assertion (n_children < prev_n_children) -> gnome-shell aborts.
+// Never let a BaseIcon re-create its texture once teardown has started.
+const guardBaseIcon = (baseIcon, owner) => {
+  if (!baseIcon || baseIcon._d2dlGuarded || !baseIcon._createIconTexture) {
+    return;
+  }
+  baseIcon._d2dlGuarded = true;
+  const markDestroying = () => {
+    baseIcon._d2dlDestroying = true;
+  };
+  baseIcon.connect('destroy', markDestroying);
+  if (owner && owner !== baseIcon) {
+    owner.connect('destroy', markDestroying);
+  }
+  const create = baseIcon._createIconTexture;
+  baseIcon._createIconTexture = function (...args) {
+    if (this._d2dlDestroying || this._d2dlCreating) return;
+    this._d2dlCreating = true;
+    try {
+      return create.apply(this, args);
+    } finally {
+      this._d2dlCreating = false;
+    }
+  };
+};
+
+const prepareIconDestroy = (item) => {
+  if (!item) return;
+  item._d2dlDestroying = true;
+  const baseIcon = item?.icon ?? item?.child?.icon;
+  if (baseIcon) baseIcon._d2dlDestroying = true;
+  item?._label?.remove_all_transitions();
+  item?.label?.remove_all_transitions();
+};
+
+const getAppFromSource = (source) => {
+  try {
+    if (Dash.getAppFromSource) return Dash.getAppFromSource(source);
+    if (DashModule.getAppFromSource) return DashModule.getAppFromSource(source);
+  } catch (err) {
+    // fall through
+  }
+  if (source?.app) return source.app;
+  if (source?.metaWindow) {
+    return Shell.WindowTracker.get_default().get_window_app(source.metaWindow);
+  }
+  return null;
+};
+
+const isDashAppItem = (actor) =>
+  !!(actor && actor.child && actor.child._delegate && actor.child._delegate.app);
 
 export let Dock = GObject.registerClass(
   {},
@@ -112,10 +219,17 @@ export let Dock = GObject.registerClass(
         clip_to_allocation: true,
         x_align: Clutter.ActorAlign.CENTER,
         y_align: Clutter.ActorAlign.CENTER,
-        offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
       });
 
       this.extension = params.extension;
+      this.connect('destroy', () => {
+        this._destroyed = true;
+        this.cancelAnimations();
+        this._destroyList();
+        this.autohider?.disable();
+        this.animator?.disable();
+        this.destroyDash();
+      });
 
       this._alignment = DockAlignment.CENTER;
       this._monitorIndex = Main.layoutManager.primaryIndex;
@@ -146,7 +260,6 @@ export let Dock = GObject.registerClass(
 
       this.renderArea = new St.Widget({
         name: 'DockRenderArea',
-        offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
         reactive: false,
         track_hover: false,
       });
@@ -170,13 +283,17 @@ export let Dock = GObject.registerClass(
 
       this.struts = new St.Widget({
         name: 'DockStruts',
-        offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
       });
+      if (SHELL_HAS_INPUT_REGION) {
+        this.inputArea = new St.Widget({
+          name: 'DockInputArea',
+          reactive: true,
+        });
+      }
       this.dwell = new St.Widget({
         name: 'DockDwell',
         reactive: true,
         track_hover: true,
-        offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
       });
       this.dwell.connectObject(
         'motion-event',
@@ -188,35 +305,66 @@ export let Dock = GObject.registerClass(
         this
       );
 
-      // struts and dwell are chrome of their own, not children
+      // struts, inputArea and dwell are chrome of their own, not children
       this.connect('destroy', () => {
         this.struts.destroy();
         this.dwell.destroy();
+        this.inputArea?.destroy();
       });
     }
 
     destroyDash() {
-      if (this.dash) {
-        {
-          this._icons = null;
-          this._findIcons();
-          this._icons.forEach((i) => {
-            this._cleanupIcon(i);
-          });
-          this._icons = null;
-        }
+      const dash = this.dash;
+      if (dash) {
+        this._prepareDashDestroy(dash);
+        dash.destroy();
+      }
+    }
+
+    _prepareDashDestroy(dash) {
+      if (!dash._d2dlDestroying) {
+        dash._d2dlDestroying = true;
+        this.cancelAnimations();
+        this._cancelFavoriteDrop(dash);
+        this._clearDashLabelTimeouts(dash);
+        dash._endItemDrag();
+        const items = [
+          ...dash._box.get_children(),
+          ...(this._extraIcons?.get_children() ?? []),
+          dash._showAppsIcon,
+        ];
+        items.forEach(item => {
+          prepareIconDestroy(item);
+          this._cleanupIcon(item);
+        });
+        this._icons = null;
+        this._layoutState = null;
+        this._extraIconState = null;
 
         // destroy (not just remove) so the Dash drops its app system,
         // favorites, overview and ctrl-alt-tab hookups
         (this._dashConnections ?? []).forEach(([source, id]) => {
-          source.disconnect(id);
+          try {
+            source.disconnect(id);
+          } catch (e) {}
         });
         this._dashConnections = [];
-        this.dash.destroy();
+        try {
+          dash.disconnectObject(this);
+        } catch (e) {}
+        Main.ctrlAltTabManager.removeGroup(dash);
+        dash._d2dlOwner = null;
         this.dash = null;
+        this._dashItems = [];
+        this._separators = [];
+        this._hoveredIcon = null;
+        this._nearestIcon = null;
+        this._lastHoveredIcon = null;
         this._trashIcon = null;
         this._recentFilesIcon = null;
         this._downloadsIcon = null;
+        this._extraIcons = null;
+        this._separator = null;
         // mounted icons?
       }
     }
@@ -225,6 +373,7 @@ export let Dock = GObject.registerClass(
       this._hidden = false;
       this.opacity = 0;
       this.renderArea.opacity = 0;
+      this.destroyDash();
       this.add_child(this.createDash());
       this._icons = null;
       this._trashIcon = null;
@@ -261,10 +410,18 @@ export let Dock = GObject.registerClass(
     undock() {
       this._destroyList();
       this._endAnimation();
-      this.dash._box.remove_effect_by_name('icon-effect');
+      this._removeIconEffect();
       this.autohider.disable();
       this.removeFromChrome();
       this.animator.disable();
+    }
+
+    _removeIconEffect() {
+      this._effectTargets().forEach((target) => {
+        if (!target) return;
+        target.remove_effect_by_name('icon-effect');
+        target.iconEffect = null;
+      });
     }
 
     _onButtonPressEvent(evt) {
@@ -272,25 +429,29 @@ export let Dock = GObject.registerClass(
     }
 
     _onMotionEvent(evt) {
-      if (!this._monitor.inFullscreen) {
+      if (!this._monitor?.inFullscreen || this.extension._inOverview) {
         this._beginAnimation();
       }
       this.autohider._debounceCheckHide();
       return Clutter.EVENT_PROPAGATE;
     }
     _onEnterEvent(evt) {
-      if (!this._monitor.inFullscreen) {
+      if (!this._monitor?.inFullscreen || this.extension._inOverview) {
         this._beginAnimation();
       }
       return Clutter.EVENT_PROPAGATE;
     }
     _onLeaveEvent(evt) {
+      // A stationary hovered dock has no frame timer. Leaving must wake it
+      // again so the rendered icons can return to their resting positions.
+      this._beginAnimation();
       this.autohider._debounceCheckHide();
       this._debounceEndAnimation();
       return Clutter.EVENT_PROPAGATE;
     }
 
     _debouncedBeginAnimation() {
+      if (this._destroyed || !this.dash) return;
       this.dash.opacity = 1;
 
       // this elaborate hack - mitigates nvim's "create window when deleting! hmmp"
@@ -329,7 +490,6 @@ export let Dock = GObject.registerClass(
     _onAppsChanged(evt) {
       this._favorite_ids = Fav.getAppFavorites()._getIds();
       this._icons = null;
-      this._fast_forward = 20;
       // this._debouncedBeginAnimation();
       this._beginAnimation();
       this.autohider._debounceCheckHide();
@@ -434,17 +594,31 @@ export let Dock = GObject.registerClass(
       this.Dash = Dash;
       let dash;
       [dash, this._dashConnections] = createTrackedDash();
+      dash._d2dlOwner = this;
 
-      dash._adjustIconSize = () => {};
-      let con = console;
       let orig = dash._createAppItem;
       orig = orig.bind(dash);
       dash._createAppItem = function (app) {
         let item = orig.call(this, app);
         this.opacity = 0;
         item.child.visible = false;
+        guardBaseIcon(item.child?.icon, item.child);
         return item;
       };
+
+      dash.handleDragOver = (source, actor, x, y, time) =>
+        this._handleDashDragOver(dash, source, x, y);
+      dash.acceptDrop = (source, actor, x, y, time) =>
+        this._acceptDashDrop(dash, source, x, y);
+      // Reuse a placeholder as it moves and remove it synchronously. Stock
+      // Dash animates old placeholders out, blocking subsequent positions.
+      dash._clearDragPlaceholder = () => this._clearDashPlaceholder(dash);
+      dash._clearEmptyDropTarget = () => {
+        const target = dash._emptyDropTarget;
+        dash._emptyDropTarget = null;
+        target?.destroy();
+      };
+      dash.connect('destroy', () => this._prepareDashDestroy(dash));
 
       this.dash = dash;
       this.dash._background.visible = false;
@@ -486,6 +660,193 @@ export let Dock = GObject.registerClass(
       return dash;
     }
 
+    _clearDashLabelTimeouts(dash) {
+      for (const name of ['_showLabelTimeoutId', '_resetHoverTimeoutId']) {
+        if (dash[name]) GLib.source_remove(dash[name]);
+        dash[name] = 0;
+      }
+      dash._labelShowing = false;
+    }
+
+    _redisplayDash(dash) {
+      if (dash !== this.dash || dash._d2dlDestroying || this._destroyed) return;
+      const favorites = Fav.getAppFavorites().getFavorites();
+      const favoriteIds = new Set(favorites.map(app => app.get_id()));
+      const apps = [...favorites];
+      for (const app of dash._appSystem.get_running()) {
+        if (!favoriteIds.has(app.get_id())) apps.push(app);
+      }
+      const wanted = new Set(apps.map(app => app.get_id()));
+      const items = new Map();
+      for (const item of dash._box.get_children().filter(isDashAppItem)) {
+        const id = item.child._delegate.app.get_id();
+        if (!wanted.has(id) || items.has(id)) {
+          this._clearDashLabelTimeouts(dash);
+          prepareIconDestroy(item);
+          this._cleanupIcon(item);
+          item.destroy();
+        } else {
+          items.set(id, item);
+        }
+      }
+      // Reordering favorites preserves AppIcon, its texture and active drag
+      // gesture. Destroy/recreate during a hovered reorder can abort Clutter.
+      apps.forEach((app, index) => {
+        let item = items.get(app.get_id());
+        if (!item) {
+          item = dash._createAppItem(app);
+          dash._box.insert_child_at_index(item, index);
+          item.show(false);
+        } else {
+          dash._box.set_child_at_index(item, index);
+        }
+      });
+      if (favoriteIds.size > 0 && favoriteIds.size < apps.length) {
+        if (!dash._separator) {
+          dash._separator = new St.Widget({style_class: 'dash-separator'});
+          dash._box.add_child(dash._separator);
+        }
+        dash._box.set_child_at_index(dash._separator, favorites.length);
+      } else if (dash._separator) {
+        dash._separator.destroy();
+        dash._separator = null;
+      }
+      if (this._extraIcons?.get_parent() === dash._box)
+        dash._box.set_child_above_sibling(this._extraIcons, null);
+      if (dash._dragPlaceholder) this._positionDashPlaceholder(dash);
+      dash._shownInitially = true;
+      this._icons = null;
+      this._favorite_ids = [...favoriteIds];
+      this._beginAnimation();
+    }
+
+    _setDragState(dragging, icon = null) {
+      this._dragging = dragging;
+      this._dragged = dragging ? icon ?? this._dragged : null;
+      this._icons = null;
+      if (!this._destroyed && this.dash && !this.dash._d2dlDestroying) {
+        this._beginAnimation();
+        this.autohider?._debounceCheckHide();
+      }
+    }
+
+    _getDashDrop(dash, source, x, y) {
+      if (dash !== this.dash || dash._d2dlDestroying || this._destroyed ||
+          !global.settings.is_writable('favorite-apps')) return null;
+      const app = getAppFromSource(source);
+      if (!app || app.is_window_backed?.() || !app.get_id) return null;
+      const favorites = Fav.getAppFavorites().getFavorites();
+      const ids = favorites.map(favorite => favorite.get_id());
+      const byId = new Map(dash._box.get_children().filter(item =>
+        isDashAppItem(item) && item.visible && !item.animatingOut
+      ).map(item => [item.child._delegate.app.get_id(), item]));
+      const vertical = this.isVertical();
+      const centers = [];
+      for (const id of ids) {
+        const item = byId.get(id);
+        // A favorites signal is queued for redisplay. Wait until geometry
+        // matches the favorite list, rather than selecting the wrong slot.
+        if (!item) return null;
+        const target = item._renderer?.visible ? item._renderer : item;
+        const [cx, cy] = target.get_transformed_position();
+        const [cw, ch] = target.get_transformed_size();
+        centers.push(vertical ? cy + ch / 2 : cx + cw / 2);
+      }
+      // DND coordinates are local to _box, including touch drags; querying
+      // global.get_pointer() would use an unrelated mouse position on touch.
+      const [boxX, boxY] = dash._box.get_transformed_position();
+      const [boxW, boxH] = dash._box.get_transformed_size();
+      const pointer = vertical
+        ? boxY + y * (dash._box.height ? boxH / dash._box.height : 1)
+        : boxX + x * (dash._box.width ? boxW / dash._box.width : 1);
+      const reversed = !vertical &&
+        dash._box.text_direction === Clutter.TextDirection.RTL;
+      const slot = getDropSlot(pointer, centers, reversed);
+      return slot === null ? null : {app, ids, slot};
+    }
+
+    _clearDashPlaceholder(dash) {
+      const placeholder = dash._dragPlaceholder;
+      dash._dragPlaceholder = null;
+      dash._dragPlaceholderPos = -1;
+      dash._d2dlDropSource = null;
+      placeholder?.destroy();
+    }
+
+    _positionDashPlaceholder(dash) {
+      const placeholder = dash._dragPlaceholder;
+      const apps = dash._box.get_children().filter(isDashAppItem);
+      const numFavorites = Fav.getAppFavorites().getFavorites().length;
+      const anchor = dash._separator && dash._dragPlaceholderPos >= numFavorites
+        ? dash._separator : apps[dash._dragPlaceholderPos] ?? this._extraIcons;
+      dash._box.set_child_below_sibling(placeholder, anchor);
+    }
+
+    _handleDashDragOver(dash, source, x, y) {
+      const drop = this._getDashDrop(dash, source, x, y);
+      if (!drop) {
+        this._clearDashPlaceholder(dash);
+        return DND.DragMotionResult.NO_DROP;
+      }
+      const id = drop.app.get_id();
+      if (planFavoriteDrop(drop.ids, id, drop.slot).unchanged) {
+        this._clearDashPlaceholder(dash);
+        return DND.DragMotionResult.CONTINUE;
+      }
+      if (!dash._dragPlaceholder) {
+        dash._dragPlaceholder = new St.Bin({
+          style_class: 'placeholder',
+          reactive: false,
+        });
+        dash._box.add_child(dash._dragPlaceholder);
+      }
+      const size = this._iconSizeScaledDown || dash.iconSize;
+      const scale = this._scaleFactor || 1;
+      dash._dragPlaceholder.set_size(
+        Math.max(1, size * scale * (this.isVertical() ? 1 : 0.5)),
+        Math.max(1, size * scale * (this.isVertical() ? 0.5 : 1))
+      );
+      dash._dragPlaceholderPos = drop.slot;
+      dash._d2dlDropSource = id;
+      this._positionDashPlaceholder(dash);
+      return DND.DragMotionResult.MOVE_DROP;
+    }
+
+    _cancelFavoriteDrop(dash) {
+      if (!dash._d2dlFavoriteLater) return;
+      global.compositor.get_laters().remove(dash._d2dlFavoriteLater);
+      dash._d2dlFavoriteLater = 0;
+    }
+
+    _acceptDashDrop(dash, source, x, y) {
+      const drop = this._getDashDrop(dash, source, x, y);
+      if (!drop) return false;
+      const id = drop.app.get_id();
+      const slot = dash._d2dlDropSource === id && dash._dragPlaceholder
+        ? dash._dragPlaceholderPos : drop.slot;
+      const plan = planFavoriteDrop(drop.ids, id, slot);
+      if (plan.unchanged) return true;
+      this._cancelFavoriteDrop(dash);
+      dash._d2dlFavoriteLater = global.compositor.get_laters().add(
+        Meta.LaterType.BEFORE_REDRAW,
+        () => {
+          dash._d2dlFavoriteLater = 0;
+          if (dash !== this.dash || dash._d2dlDestroying || this._destroyed ||
+              !global.settings.is_writable('favorite-apps')) return GLib.SOURCE_REMOVE;
+          const favorites = Fav.getAppFavorites();
+          const ids = favorites.getFavorites().map(app => app.get_id());
+          // A favorite removed elsewhere while this move was queued stays
+          // removed. Dragging a new app into the dock still pins it.
+          if (drop.ids.includes(id) && !ids.includes(id)) return GLib.SOURCE_REMOVE;
+          const position = resolveFavoriteDrop(ids, id, plan);
+          if (ids.includes(id)) favorites.moveFavoriteToPos(id, position);
+          else favorites.addFavoriteAtPos(id, position);
+          return GLib.SOURCE_REMOVE;
+        }
+      );
+      return true;
+    }
+
     addToChrome() {
       if (this._onChrome) {
         return;
@@ -495,9 +856,20 @@ export let Dock = GObject.registerClass(
 
       Main.layoutManager.addChrome(this.struts, {
         affectsStruts: !this.extension.autohide_dash,
-        ...inputRegionParam(true),
+        ...inputRegionParam(false),
         trackFullscreen: false,
       });
+
+      // X11 only: the struts span the whole monitor edge, so they can't be
+      // the input region too - that swallowed clicks along the entire edge.
+      // This actor follows the dock background instead (see animator).
+      if (SHELL_HAS_INPUT_REGION) {
+        Main.layoutManager.addChrome(this.inputArea, {
+          affectsStruts: false,
+          ...inputRegionParam(true),
+          trackFullscreen: true,
+        });
+      }
 
       Main.layoutManager.addChrome(this, {
         affectsStruts: false,
@@ -518,11 +890,14 @@ export let Dock = GObject.registerClass(
       if (!this._onChrome) {
         return;
       }
+      if (SHELL_HAS_INPUT_REGION && this.inputArea) {
+        Main.layoutManager.removeChrome(this.inputArea);
+      }
       Main.layoutManager.removeChrome(this.struts);
       Main.layoutManager.removeChrome(this);
       Main.layoutManager.removeChrome(this.dwell);
       this._onChrome = false;
-      this.dash._box.get_parent().remove_effect_by_name('icon-effect');
+      this._removeIconEffect();
     }
 
     isVertical() {
@@ -591,30 +966,26 @@ export let Dock = GObject.registerClass(
       if (baseIcon.icon) return baseIcon.icon;
       // GNOME 50: try _iconBin.child
       if (baseIcon._iconBin && baseIcon._iconBin.child) return baseIcon._iconBin.child;
-      // Force icon creation if not yet initialized
-      try {
-        if (baseIcon.setIconSize) {
-          let size = (typeof baseIcon.iconSize === 'number' && baseIcon.iconSize > 0) ? baseIcon.iconSize : 48;
-          baseIcon._createIconTexture(size);
-          if (baseIcon.icon) return baseIcon.icon;
-          if (baseIcon._iconBin && baseIcon._iconBin.child) return baseIcon._iconBin.child;
-        }
-      } catch (err) {
-        // ignore initialization errors
-      }
+      // Style initialization owns texture creation. Recreating a missing
+      // texture here can run while Clutter is destroying or allocating it.
       return null;
     }
     
     _inspectIcon(c) {
-      if (!c.visible) return false;
+      if (!c.visible || c.animatingOut || c._d2dlDestroying) return false;
 
       /* release any reference once destroyed */
       if (!c._destroyConnectId) {
         c._destroyConnectId = c.connect('destroy', () => {
+          c._d2dlDestroying = true;
+          if (c._icon === this._dragged) this._setDragState(false);
+          this._cleanupIcon(c);
           this._icons = null;
           c._label = null;
           c._icon = null;
           c._appwell = null;
+          c._prev = null;
+          c._next = null;
         });
       }
 
@@ -631,6 +1002,7 @@ export let Dock = GObject.registerClass(
       /* ShowAppsIcon - GNOME 50: has .icon (BaseIcon) directly and .child (toggleButton) */
       /* ShowAppsIcon - GNOME 46: has .icon.icon (StIcon) */
       if (c.icon /* BaseIcon or old IconGrid */) {
+        guardBaseIcon(c.icon, c);
         let stIcon = null;
         // GNOME 50: icon is BaseIcon, icon.icon might be null initially
         stIcon = this._getStIconFromAppwell(c);
@@ -647,14 +1019,11 @@ export let Dock = GObject.registerClass(
             // ignore
           }
         }
-      }
-
-      /* DashItemContainer - GNOME 50: child (DashIcon/AppIcon) has .icon (BaseIcon) */
-      /* DashItemContainer - GNOME 46: child.icon.icon is StIcon */
-      if (c.child /* DashIcon/AppIcon */) {
+      } else if (c.child /* DashIcon/AppIcon */) {
         let appwell = c.child;
         let stIcon = null;
         if (appwell.icon /* BaseIcon or old IconGrid */) {
+          guardBaseIcon(appwell.icon, appwell);
           stIcon = this._getStIconFromAppwell(appwell);
           if (!stIcon && appwell.icon.icon) {
             stIcon = appwell.icon.icon;
@@ -694,6 +1063,15 @@ export let Dock = GObject.registerClass(
       }
       
       if (c._icon) {
+        const texture = c._icon;
+        if (!texture._d2dlInvalidationConnected) {
+          texture._d2dlInvalidationConnected = true;
+          texture.connectObject('destroy', () => {
+            if (this._dragged === texture) this._setDragState(false);
+            if (c._icon === texture) c._icon = null;
+            this._icons = null;
+          }, c);
+        }
         // renderer takes care of displaying an icon
         c._icon.opacity = 0;
         c._label = c.label;
@@ -731,16 +1109,29 @@ export let Dock = GObject.registerClass(
       c._image = null;
       c._clock = null;
       c._calendar = null;
-      if (c._menu && c._menu.actor) {
-        c._menu.destroy();
-        c._menu = null;
+      // Menus are parented in Main.uiGroup, so destroying an item does not
+      // destroy its popup actor. Detach managers before removing that actor,
+      // and clear both references when custom items share the same menu.
+      const appwell = c.child;
+      const menus = new Set([c._menu, appwell?._menu].filter(Boolean));
+      c._menu = null;
+      if (appwell) appwell._menu = null;
+      for (const menu of menus) {
+        menu.close();
+        c._menuManager?.removeMenu(menu);
+        appwell?._menuManager?.removeMenu(menu);
+        menu.destroy();
       }
-      if (c._label) {
-        let p = c._label.get_parent();
-        if (p) {
-          p.remove_child(c._label);
-        }
-      }
+      c._label = null;
+      c._prev = null;
+      c._next = null;
+    }
+
+    _destroyDockItem(item) {
+      prepareIconDestroy(item);
+      this._cleanupIcon(item);
+      item.destroy();
+      this._icons = null;
     }
 
     _findIcons() {
@@ -777,26 +1168,9 @@ export let Dock = GObject.registerClass(
         this._inspectIcon(icon);
       });
 
-      // hack: sometimes the Dash creates more than one separator
-      // workaround - remove all separators in such situation
-      //! pinpoint the cause of the errors
-      if (this._separators.length > 1) {
-        while (this._separators.length > 0) {
-          this.dash._box.remove_child(this._separators[0]);
-          this._separators.shift();
-        }
-      }
-
       // hide separator between running apps and favorites - if not needed
-      if (this.extension.favorites_only) {
-        if (this._separators.length) {
-          this._separators[0].visible = false;
-          this._separators = [];
-        }
-      } else {
-        if (this._separators.length) {
-          this._separators[0].visible = true;
-        }
+      if (this.dash._separator) {
+        this.dash._separator.visible = !this.extension.favorites_only;
       }
 
       //--------------------
@@ -824,32 +1198,22 @@ export let Dock = GObject.registerClass(
             appsIcon.connectObject(
               'button-press-event',
               () => {
-                let overview = Main.uiGroup
-                  .get_children()
-                  .find((c) => c.name == 'overviewGroup')
-                  .get_children()
-                  .find((c) => c.name == 'overview');
-                if (overview._delegate.visible) {
-                  overview._delegate.toggle();
+                const showAppsButton = Main.overview.dash.showAppsButton ??
+                  Main.overview.dash._showAppsIcon?.toggleButton;
+                if (Main.overview.visible && showAppsButton && showAppsButton.checked) {
+                  Main.overview.hide();
                 } else {
-                  overview._delegate.showApps();
+                  Main.overview.showApps();
                 }
-                return Clutter.EVENT_PROPAGATE;
+                return Clutter.EVENT_STOP;
               },
-              this
-            );
-          }
-          let icon = appsIcon._icon;
-          if (!icon._connected) {
-            icon._connected = true;
-            icon.connectObject(
               'enter-event',
               () => {
-                this.dash._showAppsIcon.showLabel();
+                if (!appsIcon._d2dlDestroying) appsIcon.showLabel();
               },
               'leave-event',
               () => {
-                this.dash._showAppsIcon.hideLabel();
+                if (!appsIcon._d2dlDestroying) appsIcon.hideLabel();
               },
               this
             );
@@ -874,8 +1238,6 @@ export let Dock = GObject.registerClass(
             }
           };
         }
-        c._icon.track_hover = true;
-        c._icon.reactive = true;
         c._icon.pivot_point = pv;
         if (c._button) {
           c._button.reactive = noAnimation;
@@ -901,21 +1263,22 @@ export let Dock = GObject.registerClass(
             }
           };
         }
-        let icon = c._icon;
-        if (icon && !icon._destroyConnectId) {
-          icon._destroyConnectId = icon.connect('destroy', () => {
-            this._cleanupIcon(c);
-          });
-        }
-        let { _draggable } = c.child;
+        let { _draggable } = c.child || {};
         if (_draggable && !_draggable._dragBeginId) {
           _draggable._dragBeginId = _draggable.connect('drag-begin', () => {
-            this._dragging = true;
-            this._dragged = icon;
+            this._setDragState(true, c._icon);
           });
           _draggable._dragEndId = _draggable.connect('drag-end', () => {
-            this._dragging = false;
-            this._icons = null;
+            this._setDragState(false);
+          });
+          _draggable._dragCancelledId = _draggable.connect('drag-cancelled', () => {
+            this._setDragState(false);
+          });
+          c.connect('destroy', () => {
+            for (const name of ['_dragBeginId', '_dragEndId', '_dragCancelledId']) {
+              if (_draggable[name]) _draggable.disconnect(_draggable[name]);
+              _draggable[name] = 0;
+            }
           });
         }
       });
@@ -928,6 +1291,7 @@ export let Dock = GObject.registerClass(
           prev._next = c;
         }
         c._prev = prev;
+        c._next = null;
         prev = c;
       });
 
@@ -935,9 +1299,14 @@ export let Dock = GObject.registerClass(
     }
 
     _updateExtraIcons() {
-      if (!this._extraIcons) {
+      if (!this._extraIcons || this._dragging) {
         return;
       }
+      const services = this.extension.services;
+      const mounted = this.extension.mounted_icon ? Object.keys(services._mounts) : [];
+      const state = [this._extraIcons, this.extension.downloads_icon,
+        this.extension.trash_icon, services._downloadsDir, mounted.join('\0')];
+      if (this._extraIconState?.every((value, index) => value === state[index])) return;
 
       // check these intermittently!
       //---------------
@@ -947,15 +1316,13 @@ export let Dock = GObject.registerClass(
         //! avoid creating app_info & /tmp/*.desktop files
         let extras = [...this._extraIcons.get_children()];
         let extraMountPaths = extras.map((e) => e._mountPath);
-        let mounted = Object.keys(this.extension.services._mounts);
 
         extras.forEach((extra) => {
           if (!extra._mountType) {
             return;
           }
           if (!mounted.includes(extra._mountPath)) {
-            extra.destroy();
-            this._icons = null;
+            this._destroyDockItem(extra);
           }
         });
 
@@ -975,23 +1342,6 @@ export let Dock = GObject.registerClass(
       //! add explanations
       let folders = [
         {
-          icon: '_recentFilesIcon',
-          folder: 'recent:///',
-          //! find a way to avoid this
-          path: `${this.extension.path}/apps/recents-dash2dock-lite.desktop`,
-          // not ready for prime time
-          // does not work on gnome 43 (debian)
-          show: false, // this.extension.documents_icon,
-          prepare: this.extension.services.checkRecents.bind(
-            this.extension.services
-          ),
-          items: '_recentFiles',
-          itemsLength: '_recentFilesLength',
-          cleanup: (() => {
-            // this.extension.services._recentFiles = null;
-          }).bind(this),
-        },
-        {
           icon: '_downloadsIcon',
           folder: this.extension.services._downloadsDir?.get_path(),
           //! find a way to avoid this
@@ -1007,14 +1357,18 @@ export let Dock = GObject.registerClass(
       ];
 
       folders.forEach((f) => {
+        if (this[f.icon] && f.show && this[f.icon]._folder !== f.folder) {
+          this._destroyDockItem(this[f.icon]);
+          this[f.icon] = null;
+        }
         if (!this[f.icon] && f.show) {
           this[f.icon] = DockItemList.createItem(this, f);
+          this[f.icon]._folder = f.folder;
           this._icons = null;
         } else if (this[f.icon] && !f.show) {
           // unpin downloads icon
-          this[f.icon].destroy();
+          this._destroyDockItem(this[f.icon]);
           this[f.icon] = null;
-          this._icons = null;
         }
         f.cleanup();
       });
@@ -1031,9 +1385,8 @@ export let Dock = GObject.registerClass(
         this._icons = null;
       } else if (this._trashIcon && !this.extension.trash_icon) {
         // unpin trash icon
-        this._trashIcon.destroy();
+        this._destroyDockItem(this._trashIcon);
         this._trashIcon = null;
-        this._icons = null;
       } else if (this._trashIcon && this.extension.trash_icon) {
         // move trash icon to the end
         if (this._extraIcons.last_child != this._trashIcon) {
@@ -1041,6 +1394,7 @@ export let Dock = GObject.registerClass(
           this._extraIcons.add_child(this._trashIcon);
         }
       }
+      this._extraIconState = state;
     }
 
     _snapToContainerEdge(container, child, edge = true) {
@@ -1064,14 +1418,7 @@ export let Dock = GObject.registerClass(
     }
 
     layout() {
-      if (!this.dash || !this.dash.last_child) return;
-      if (this.extension.apps_icon_front) {
-        this.dash.last_child.text_direction = 2; // RTL
-        this.dash._box.text_direction = 1; // LTR
-      } else {
-        this.dash.last_child.text_direction = 1; // LTR
-        this.dash._box.text_direction = 1; // LTR
-      }
+      if (this._destroyed || !this.dash || !this.dash.last_child) return;
 
       const locations = [
         DockPosition.BOTTOM,
@@ -1095,45 +1442,24 @@ export let Dock = GObject.registerClass(
         return false;
       }
 
-      let scaleFactor = m.geometry_scale;
+      let scaleFactor = m.geometry_scale || 1;
       let vertical = this.isVertical();
       this._scaleFactor = scaleFactor;
 
       this._icons = this._findIcons();
+      const settings = this.extension;
+      const state = [this.dash, this.dash.last_child, this._extraIcons,
+        this._icons, this._icons.length, m, m.x, m.y, m.width, m.height,
+        scaleFactor, this.dash.width, this.dash.height, this._position,
+        settings.apps_icon_front, settings.icon_size, settings.scale,
+        settings._config.icon_size, settings.icon_spacing,
+        settings.animation_spread, settings.animation_magnify,
+        settings.edge_distance, settings.panel_mode];
+      if (this._layoutState?.every((value, index) => value === state[index])) return true;
 
-      //! add explanation
-      let flags = {
-        top: {
-          edgeX: 0,
-          edgeY: 0,
-          offsetX: 0,
-          offsetY: 0,
-        },
-        bottom: {
-          edgeX: 0,
-          edgeY: 1,
-          offsetX: 0,
-          offsetY: -1,
-        },
-        left: {
-          edgeX: 0,
-          edgeY: 0,
-          offsetX: 0,
-          offsetY: 0,
-        },
-        right: {
-          edgeX: 1,
-          edgeY: 0,
-          offsetX: -1,
-          offsetY: 0,
-        },
-      };
-      let f = flags[this._position];
-
-      let width = 1200;
-      let height = 140;
-      //! use dock size limit - add preferences
-      let dock_size_limit = 1;
+      this.dash.last_child.text_direction = settings.apps_icon_front
+        ? Clutter.TextDirection.RTL : Clutter.TextDirection.LTR;
+      this.dash._box.text_direction = Clutter.TextDirection.LTR;
       let animation_spread = this.extension.animation_spread;
       // let animation_magnify = this.extension.animation_magnify;
 
@@ -1194,16 +1520,14 @@ export let Dock = GObject.registerClass(
       });
 
       //! check with multi-monitor and scaled displays
-      this.x = m.x;
-      this.y = m.y;
-      this.width = m.width;
-      this.height = m.height;
-
       // reorient and reposition the dash
-      this.dash.last_child.layout_manager.orientation = vertical;
-      this.dash._box.layout_manager.orientation = vertical;
+      let orientation = vertical
+        ? Clutter.Orientation.VERTICAL
+        : Clutter.Orientation.HORIZONTAL;
+      this.dash.last_child.layout_manager.orientation = orientation;
+      this.dash._box.layout_manager.orientation = orientation;
       if (this._extraIcons) {
-        this._extraIcons.layout_manager.orientation = vertical;
+        this._extraIcons.layout_manager.orientation = orientation;
       }
 
       // hug the edge
@@ -1218,11 +1542,10 @@ export let Dock = GObject.registerClass(
       // computation derived from animation scale
       let magnify = this.extension.animation_magnify * 1.8;
       let fp = iconSize * 2 + iconSize * (0.6 * (1 + magnify));
-      if (vertical) {
-        this.width = fp * scaleFactor;
-      } else {
-        this.height = fp * scaleFactor;
-      }
+      // Assign the final bounds directly. Resizing to a whole monitor before
+      // shrinking every frame invalidates allocations and offscreen textures.
+      this.width = vertical ? fp * scaleFactor : m.width;
+      this.height = vertical ? m.height : fp * scaleFactor;
       this._snapToContainerEdge(m, this, true);
       this.x += m.x;
       this.y += m.y;
@@ -1252,6 +1575,7 @@ export let Dock = GObject.registerClass(
         }
       }
 
+      this._layoutState = state;
       return true;
     }
 
@@ -1267,20 +1591,11 @@ export let Dock = GObject.registerClass(
           !transparent && this.extension.blur_background;
       }
 
-      if (this.extension.customize_topbar) {
-        let transparent_topbar =
-          (Main.overview.visible || this.extension._inOverview) &&
-          this.extension.overview_transparent_topbar_background;
-
-        if (
-          transparent_topbar &&
-          (Main.panel.style == '' || Main.panel.style == null)
-        ) {
-          Main.panel.style = 'border: 0px; background: transparent;';
-        } else if (!(Main.panel.style == '' || Main.panel.style == null)) {
-          Main.panel.style = '';
-        }
-      }
+      this.extension._updatePanelTransparency(
+        this.extension.customize_topbar &&
+        (Main.overview.visible || this.extension._inOverview) &&
+        this.extension.overview_transparent_topbar_background
+      );
     }
 
     preview() {
@@ -1289,6 +1604,7 @@ export let Dock = GObject.registerClass(
     }
 
     animate(dt = 15) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this._preview) {
         let p = null;
 
@@ -1313,13 +1629,6 @@ export let Dock = GObject.registerClass(
       //! add layout here instead of at the
       this.animator.animate(dt);
 
-      // hack to mitigate jerkiness when a new icon is inserted
-      if (!this._pauseBounce || this._pauseBounce <= 0) {
-        while (this._fast_forward && this._fast_forward-- > 0) {
-          this.animate(dt);
-          this.dash.opacity = 0;
-        }
-      }
       this.simulated_pointer = null;
 
       if (this._pauseBounce && this._pauseBounce > 0) {
@@ -1341,13 +1650,14 @@ export let Dock = GObject.registerClass(
     }
 
     _beginAnimation(caller) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this.extension.debug_visual) {
         this.add_style_class_name('hi');
         this.struts.add_style_class_name('hi');
         this.dwell.add_style_class_name('hi');
       }
 
-      this._favorite_ids = Fav.getAppFavorites()._getIds();
+      if (!this._favorite_ids) this._favorite_ids = Fav.getAppFavorites()._getIds();
 
       // if (caller) {
       //   console.log(`animation triggered by ${caller}`);
@@ -1374,22 +1684,51 @@ export let Dock = GObject.registerClass(
     }
 
     _endAnimation() {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this.extension.debug_visual) {
         this.remove_style_class_name('hi');
         this.struts.remove_style_class_name('hi');
         this.dwell.remove_style_class_name('hi');
       }
 
-      this._updateFocusedIcon();
-
-      if (this.extension._hiTimer) {
-        this.extension._hiTimer.cancel(this._animationSeq);
-        this.extension._loTimer.cancel(this.debounceEndSeq);
-      }
+      this._settleAnimation();
       this.autohider._debounceCheckHide();
+
+      let icons = this._icons || this._findIcons();
+      if (icons) {
+        icons.forEach((c) => {
+          if (c._icon) {
+            c._icon.set_scale(1, 1);
+            c._icon.translation_x = 0;
+            c._icon.translation_y = 0;
+          }
+          if (c.child) {
+            c.child.translation_x = 0;
+            c.child.translation_y = 0;
+          }
+          c._scale = 1;
+          c._targetScale = 1;
+          c._locked = false;
+          c._positionCache = null;
+        });
+      }
+
       this._icons = null;
       this._dragged = null;
       this._lastHoveredIcon = null;
+    }
+
+    _settleAnimation() {
+      this._updateFocusedIcon();
+      this.extension._hiTimer?.cancel(this._animationSeq);
+      this.extension._loTimer?.cancel(this.debounceEndSeq);
+      this._animationSeq = null;
+      this.debounceEndSeq = null;
+      if (this.extension.debug_visual) {
+        this.remove_style_class_name('hi');
+        this.struts.remove_style_class_name('hi');
+        this.dwell.remove_style_class_name('hi');
+      }
     }
 
     _destroyList() {
@@ -1400,6 +1739,7 @@ export let Dock = GObject.registerClass(
     }
 
     _debounceEndAnimation() {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this.extension._loTimer) {
         if (!this.debounceEndSeq) {
           this.debounceEndSeq = this.extension._loTimer.runDebounced(
@@ -1416,17 +1756,22 @@ export let Dock = GObject.registerClass(
     }
 
     cancelAnimations() {
-      this.extension._hiTimer.cancel(this._animationSeq);
+      for (const sequence of this._deferredActions ?? [])
+        this.extension._hiTimer?.cancel(sequence);
+      this._deferredActions?.clear();
+      this._lockedCycle = false;
+      this.animator?.cancelAnimations();
+      this.extension._hiTimer?.cancel(this._animationSeq);
       this._animationSeq = null;
-      this.extension._hiTimer.cancel(this.autohider._animationSeq);
-      this.autohider._animationSeq = null;
+      this.extension._hiTimer?.cancel(this.autohider?._animationSeq);
+      if (this.autohider) this.autohider._animationSeq = null;
       // pending debounced callbacks would otherwise touch a destroyed dock
-      this.extension._loTimer.cancel(this.debounceEndSeq);
+      this.extension._loTimer?.cancel(this.debounceEndSeq);
       this.debounceEndSeq = null;
-      this.extension._loTimer.cancel(this._debounceBeginAnimateSeq);
+      this.extension._loTimer?.cancel(this._debounceBeginAnimateSeq);
       this._debounceBeginAnimateSeq = null;
-      this.extension._loTimer.cancel(this.autohider._debounceCheckSeq);
-      this.autohider._debounceCheckSeq = null;
+      this.extension._loTimer?.cancel(this.autohider?._debounceCheckSeq);
+      if (this.autohider) this.autohider._debounceCheckSeq = null;
     }
 
     _updateFocusedIcon() {
@@ -1448,6 +1793,7 @@ export let Dock = GObject.registerClass(
     }
 
     _maybeMinimizeOrMaximize(app, button) {
+      if (this._destroyed || !this.dash) return;
       if (!app.get_windows) {
         return;
       }
@@ -1485,7 +1831,9 @@ export let Dock = GObject.registerClass(
 
       // delay - allow dash to actually call 'activate' first
       if (focusedWindow) {
-        this.extension._hiTimer.runOnce(() => {
+        this._runDeferredAction(() => {
+          const current = new Set(app.get_windows());
+          if (!current.has(focusedWindow)) return;
           if (shift) {
             // Gnome 49 dropped the Meta.MaximizeFlags argument
             let flags = focusedWindow.set_maximize_flags
@@ -1502,7 +1850,7 @@ export let Dock = GObject.registerClass(
             }
           } else {
             windows.forEach((w) => {
-              w.minimize();
+              if (current.has(w)) w.minimize();
             });
           }
         }, 50);
@@ -1514,19 +1862,21 @@ export let Dock = GObject.registerClass(
         // multi-monitors fix -- where focus can seem to get lost
         if (!hidden.length) {
           let windows = app.get_windows().filter((w) => {
-            return w.get_monitor() == this._monitor.index;
+            return w.get_monitor() == this._monitor?.index;
           });
           if (windows.length > 0) {
-            this.extension._hiTimer.runOnce(() => {
-              this._raiseAndFocus(windows[0]);
+            this._runDeferredAction(() => {
+              const window = app.get_windows().find(w => windows.includes(w));
+              if (window) this._raiseAndFocus(window);
             }, 50);
           }
           return;
         }
 
-        this.extension._hiTimer.runOnce(() => {
+        this._runDeferredAction(() => {
+          const current = new Set(app.get_windows());
           windows.forEach((w) => {
-            if (w.is_hidden()) {
+            if (current.has(w) && w.is_hidden()) {
               w.unminimize();
               if (w.has_focus()) {
                 w.raise();
@@ -1647,19 +1997,36 @@ export let Dock = GObject.registerClass(
     _lockCycle() {
       if (this._lockedCycle) return;
       this._lockedCycle = true;
-      this.extension._hiTimer.runOnce(() => {
+      this._runDeferredAction(() => {
         this._lockedCycle = false;
       }, 150);
     }
 
+    _runDeferredAction(callback, delay) {
+      if (this._destroyed || !this.dash || !this.extension._hiTimer) return;
+      this._deferredActions ??= new Set();
+      const dash = this.dash;
+      const sequence = this.extension._hiTimer.runOnce(() => {
+        this._deferredActions.delete(sequence);
+        if (!this._destroyed && this.dash === dash && !dash._d2dlDestroying)
+          callback();
+      }, delay);
+      if (sequence) this._deferredActions.add(sequence);
+      return sequence;
+    }
+
     _raiseAndFocus(w) {
+      if (this._destroyed || !w) return;
       let workspaceManager = global.workspace_manager;
       let activeWs = workspaceManager.get_active_workspace();
-      if (activeWs == w.get_workspace()) {
+      const workspace = w.get_workspace();
+      if (!workspace) return;
+      const time = global.get_current_time();
+      if (activeWs == workspace) {
         w.raise();
-        w.focus(0);
+        w.focus(time);
       } else {
-        activeWs.activate_with_focus(w, global.get_current_time());
+        workspace.activate_with_focus(w, time);
       }
     }
 

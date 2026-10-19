@@ -138,7 +138,7 @@ export const Clock = GObject.registerClass(
     }
 
     redraw() {
-      this._canvas.settings = this.settings;
+      this._canvas.settings = { ...this._canvas.settings, ...this.settings };
       this._canvas.redraw();
     }
 
@@ -167,7 +167,15 @@ const ClockCanvas = GObject.registerClass(
     }
 
     vfunc_repaint() {
-      let ctx = this.get_context();
+      const ctx = this.get_context();
+      try {
+        this._paint(ctx);
+      } finally {
+        ctx.$dispose();
+      }
+    }
+
+    _paint(ctx) {
       let [width, height] = this.get_surface_size();
       ctx.setOperator(Cairo.Operator.CLEAR);
       ctx.paint();
@@ -215,7 +223,7 @@ const ClockCanvas = GObject.registerClass(
         },
       };
 
-      clock_style = clock_style % 7;
+      clock_style = (clock_style ?? 0) % 8;
 
       switch (clock_style) {
         // framed clocks
@@ -342,7 +350,6 @@ const ClockCanvas = GObject.registerClass(
 
       // this._hideIcon = hideIcon;
       this._hideIcon = true;
-      ctx.$dispose();
     }
   }
 );

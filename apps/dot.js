@@ -48,17 +48,28 @@ const DotCanvas = GObject.registerClass(
     }
 
     set_state(s) {
+      const sameArray = (a, b) =>
+        a === b ||
+        (a == null && b == null) ||
+        (Array.isArray(a) &&
+          Array.isArray(b) &&
+          a.length === b.length &&
+          a.every((v, idx) => v === b[idx]));
       if (
         !this.state ||
         this.state.count != s.count ||
-        this.state.color != s.color ||
+        !sameArray(this.state.color, s.color) ||
         this.state.style != s.style ||
         this.state.rotate != s.rotate ||
-        this.state.translate != s.translate ||
+        !sameArray(this.state.translate, s.translate) ||
         this.state.scale != s.scale ||
         this.state.size != s.size
       ) {
-        this.state = s;
+        this.state = {
+          ...s,
+          color: s.color ? [...s.color] : null,
+          translate: s.translate ? [...s.translate] : null,
+        };
         this.redraw();
       }
     }
@@ -70,16 +81,22 @@ const DotCanvas = GObject.registerClass(
 
     vfunc_repaint() {
       let ctx = this.get_context();
+      try {
+        this._paint(ctx);
+      } finally {
+        ctx.$dispose();
+      }
+    }
+
+    _paint(ctx) {
       let [width, height] = this.get_surface_size();
 
       let size = width;
 
-      if (!this.state || !this.state.color || !this.state.count) return;
-
-      const dot_color = this.state.color;
-
       ctx.setOperator(Cairo.Operator.CLEAR);
       ctx.paint();
+
+      if (!this.state || !this.state.color || !this.state.count) return;
 
       ctx.setLineWidth(1);
       ctx.setLineCap(Cairo.LineCap.ROUND);
@@ -95,19 +112,17 @@ const DotCanvas = GObject.registerClass(
         );
       }
       if (this.state.rotate) {
-        ctx.rotate((this.state.rotate * 3.14) / 180);
+        ctx.rotate((this.state.rotate * Math.PI) / 180);
       }
       ctx.translate(-width / 2, -height / 2);
 
       // _draw_dot...
       let func = this[`_draw_${this.state.style}`];
       if (typeof func === 'function') {
-        func.bind(this)(ctx, this.state);
+        func.call(this, ctx, this.state);
       }
 
       ctx.restore();
-
-      ctx.$dispose();
     }
 
     _draw_segmented(ctx, state) {

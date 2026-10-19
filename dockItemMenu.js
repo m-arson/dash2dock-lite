@@ -15,7 +15,6 @@ import Graphene from 'gi://Graphene';
 const Point = Graphene.Point;
 
 import { DockPosition } from './dock.js';
-import { Vector } from './vector.js';
 
 const ANIM_POSITION_PER_SEC = 450 / 1000;
 
@@ -32,6 +31,7 @@ export const DockItemList = GObject.registerClass(
 
       this._box = null;
       this._labels = null;
+      this._items = null;
 
       this.connect('button-press-event', (obj, evt) => {
         if (!this._box || !this._box.get_children().length) {
@@ -39,6 +39,24 @@ export const DockItemList = GObject.registerClass(
         }
         this.slideOut();
         return Clutter.EVENT_PROPAGATE;
+      });
+
+      this.connect('destroy', () => {
+        this._items = null;
+        if (this._targetDestroyId) {
+          this._target.disconnect(this._targetDestroyId);
+          this._targetDestroyId = null;
+        }
+        if (this._box) {
+          this._box.destroy();
+          this._box = null;
+        }
+        if (this._labels) {
+          this._labels.destroy();
+          this._labels = null;
+        }
+        this._target = null;
+        this.dock = null;
       });
     }
 
@@ -96,14 +114,25 @@ export const DockItemList = GObject.registerClass(
     }
 
     slideIn(target, list) {
+      this._items = null;
+      if (this._targetDestroyId) {
+        this._target.disconnect(this._targetDestroyId);
+        this._targetDestroyId = null;
+      }
       if (this._box) {
-        this.remove_child(this._box);
+        this._box.destroy();
         this._box = null;
-        this.remove_child(this._labels);
+      }
+      if (this._labels) {
+        this._labels.destroy();
         this._labels = null;
       }
 
-      if (!list.length) return;
+      if (!list.length) {
+        this._target = null;
+        this.visible = false;
+        return;
+      }
 
       this.opacity = 0;
 
@@ -117,6 +146,11 @@ export const DockItemList = GObject.registerClass(
       this._hiddenFrames = 0;
 
       this._target = target;
+      this._targetDestroyId = target.connect('destroy', () => {
+        this._targetDestroyId = null;
+        this._target = null;
+        this.dock?._destroyList();
+      });
 
       this._box = new St.Widget({});
       this.add_child(this._box);
@@ -182,12 +216,15 @@ export const DockItemList = GObject.registerClass(
             cmd = l.exec;
           }
 
-          this.visible = false;
-          this.dock._maybeBounce(this._target);
+          // A launched menu no longer needs its icon textures, labels, file
+          // callbacks or the target's destroy handler.
+          dock._maybeBounce(this._target);
+          dock._destroyList();
 
           trySpawnCommandLine(cmd).catch((err) => {
             console.log(err);
           });
+          return Clutter.EVENT_STOP;
         });
       });
 
@@ -233,6 +270,7 @@ export const DockItemList = GObject.registerClass(
 
       let children = this._box.get_children();
       children.reverse();
+      this._items = children;
       children.forEach((l) => {
         let hX = Math.cos((angle + dir_angle) * 0.0174533);
         let hY = Math.sin((angle + dir_angle) * 0.0174533);
@@ -293,77 +331,77 @@ export const DockItemList = GObject.registerClass(
         l.rotation_angle_z = 0;
       });
 
+      // Share immutable positions between paths instead of allocating a
+      // Vector (and its component array) for every item/waypoint pair.
+      const positions = children.map((child) => ({
+        x: child._x, y: child._y, rotation_angle_z: child._rotation_angle_z,
+      }));
+      const start = { x: tp[0] - this.x, y: tp[1] - this.y, rotation_angle_z: 0 };
       for (let i = 0; i < children.length; i++) {
         let target = children[i];
-        let wp = new Vector([first._x, first._y, 0]);
-        wp.rotation_angle_z = target._rotation_angle_z;
+        let wp = { x: first._x, y: first._y,
+          rotation_angle_z: target._rotation_angle_z };
         target._waypointsIn = [wp];
         target._waypointsOut = [wp];
         for (let j = 0; j <= i; j++) {
-          let wp = new Vector([children[j]._x, children[j]._y, 0]);
-          wp.rotation_angle_z = children[j]._rotation_angle_z;
+          const wp = positions[j];
           target._waypointsIn.push(wp);
           target._waypointsOut.unshift(wp);
         }
 
-        let start = new Vector([tp[0] - this.x, tp[1] - this.y, 0]);
         target._waypointsIn.unshift(start);
         target._waypointsOut.push(start);
       }
+      dock._beginAnimation();
     }
 
     slideOut() {
       if (!this._hidden) {
         this._hidden = true;
         this._hiddenFrames = 80;
+        this.dock?._beginAnimation();
       }
     }
 
     animate(dt) {
-      // let faster
-      for (let i = 0; i < 3; i++) {
-        // more precise animation
-        this._animate(dt / 2);
-        this._animate(dt / 2);
-      }
+      return this._animate(dt);
     }
 
     _animate(dt) {
       let dock = this.dock;
+      if (!dock || dock._list !== this) return false;
       let list = dock._list;
-      if (!list) return;
+      if (!Number.isFinite(dt) || dt <= 0) return false;
 
       // list.opacity = 255;
 
       let target = list._target;
-      let list_coef = 2;
-
+      if (!target?._icon) {
+        dock._destroyList();
+        return false;
+      }
       let speed = 3 * ANIM_POSITION_PER_SEC;
       let didAnimate = false;
 
       if (dock.isVertical()) {
-        list.translationY = target._icon.translationY;
-        list.translationX =
-          -((dock._iconSizeScaledDown / 4) * target._scale) *
+        list.translation_y = target._icon.translation_y;
+        list.translation_x =
+          -((dock._iconSizeScaledDown / 4) * (target._scale ?? 1)) *
             (dock._position == 'left' ? -1 : 1) +
-          target._icon.translationX;
+          target._icon.translation_x;
       } else {
-        list.translationX = target._icon.translationX;
-        list.translationY =
-          -((dock._iconSizeScaledDown / 4) * target._scale) +
-          target._icon.translationY;
+        list.translation_x = target._icon.translation_x;
+        list.translation_y =
+          -((dock._iconSizeScaledDown / 4) * (target._scale ?? 1)) +
+          target._icon.translation_y;
       }
-
-      let tw = target.width * target._icon.scaleX;
-      let th = target.height * target._icon.scaleY;
-      let prev = null;
 
       if (list._box) {
         list._labels.x = list._box.x;
         list._labels.y = list._box.y;
       }
 
-      list._box?.get_children().forEach((c) => {
+      (this._items ?? []).forEach((c) => {
         let waypoints = list._hidden ? c._waypointsOut : c._waypointsIn;
         if (!waypoints || !waypoints.length) {
           return;
@@ -373,24 +411,30 @@ export const DockItemList = GObject.registerClass(
           c._icon.reactive = false;
         }
 
-        let posVector = new Vector([c.x, c.y]);
-        let wp = waypoints[0];
-
         didAnimate = true;
-
-        let dir = wp.subtract(posVector);
-        let mag = dir.magnitude();
-        if (mag > 0) {
-          dir = dir.normalize();
+        let x = c.x;
+        let y = c.y;
+        let rotation = c.rotation_angle_z;
+        // Preserve the six numerical steps of the original animation while
+        // reading/writing actors, creating icons and measuring labels once.
+        for (let step = 0; step < 6 && waypoints.length; step++) {
+          const wp = waypoints[0];
+          const dx = wp.x - x;
+          const dy = wp.y - y;
+          const magnitude = Math.hypot(dx, dy);
+          const distance = speed * dt / 2;
+          if (distance >= magnitude) {
+            waypoints.shift();
+            x = wp.x;
+            y = wp.y;
+          } else {
+            x += dx * distance / magnitude;
+            y += dy * distance / magnitude;
+          }
+          rotation = (rotation + (wp.rotation_angle_z || 0)) / 2;
         }
-        let delta = dir.multiplyScalar(speed * dt);
-        posVector = posVector.add(delta);
-        if (delta.magnitude() > mag || mag == 0) {
-          waypoints.shift();
-          posVector = wp;
-        }
-        c.x = posVector.x;
-        c.y = posVector.y;
+        c.x = x;
+        c.y = y;
 
         c._label_container.x = c.x;
         c._label_container.y = c.y;
@@ -413,10 +457,10 @@ export const DockItemList = GObject.registerClass(
         let lsz = c._label.get_transformed_size();
 
         if (dock.isVertical()) {
-          // c._label.translationY = -lsz[1]; // c._label.height;
-          c._label.translationX = -lsz[0]; // c._label.width;
+          // c._label.translation_y = -lsz[1]; // c._label.height;
+          c._label.translation_x = -lsz[0]; // c._label.width;
         } else {
-          c._label.translationX = -lsz[0]; // c._label.width;
+          c._label.translation_x = -lsz[0]; // c._label.width;
         }
 
         if (list._hidden) {
@@ -427,8 +471,7 @@ export const DockItemList = GObject.registerClass(
         } else {
           c._label.opacity = 255;
         }
-        c.rotation_angle_z =
-          (c.rotation_angle_z + (wp.rotation_angle_z || 0)) / 2;
+        c.rotation_angle_z = rotation;
 
         if (dock.extension.downloads_icon_rotate_labels) {
           c._label_container.rotation_angle_z = c.rotation_angle_z;
@@ -443,7 +486,7 @@ export const DockItemList = GObject.registerClass(
       });
 
       if (list._hidden) {
-        let opacity = list.opacity - 2;
+        let opacity = list.opacity - 12;
         if (opacity < 0) opacity = 0;
         list.opacity = opacity;
       } else {
@@ -453,9 +496,11 @@ export const DockItemList = GObject.registerClass(
       if (!didAnimate && list._hidden) {
         // console.log('destroy');
         dock._destroyList();
+        return false;
       }
 
       target._label.hide();
+      return didAnimate;
     }
   }
 );

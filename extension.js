@@ -27,6 +27,7 @@ import Shell from 'gi://Shell';
 import Graphene from 'gi://Graphene';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Clutter from 'gi://Clutter';
 import { tempPath, trySpawnCommandLine } from './utils.js';
 import { loadFile, firstInstalledCommand, configFile } from './utils.js';
 
@@ -44,89 +45,66 @@ import {
 
 import { schemaId, SettingsKeys } from './preferences/keys.js';
 
-const SERVICES_UPDATE_INTERVAL = 2500;
-
 const ANIM_ICON_QUALITY = 2.0;
 const ANIM_INTERVAL = 15;
 const ANIM_INTERVAL_PAD = 15;
 
 export default class Dash2DockLiteExt extends Extension {
-  createDock() {
+  createDock(monitorIndex = 0, config = null) {
     let d = new Dock({ extension: this });
     d.extension = this;
     d.opacity = 0; // animate
+    d._monitorIndex = monitorIndex;
+    d._config = config;
     d.dock();
     this.dock = d;
     this.docks.push(this.dock);
     this.listeners = [this.services, ...this.docks];
-    this._monitorIndex = 0;
     return d;
   }
 
   createTheDocks() {
+    if (!this._enabled || Main.sessionMode.isLocked || Main.sessionMode.isGreeter) return;
     this.docks = this.docks ?? [];
-
-    if (this._config.docks) {
-      let count = this._config['docks'].length;
-      if (count != this.docks.length) {
-        this.destroyDocks();
+    const monitors = Main.layoutManager.monitors;
+    let desired = [];
+    if (Array.isArray(this._config.docks)) {
+      for (const config of this._config.docks) {
+        const geometry = config?.monitor;
+        const monitor = monitors.find((m) => m.x === geometry?.x && m.y === geometry?.y);
+        if (monitor) desired.push({ index: monitor.index, config });
       }
-      this._config.docks.forEach((dc) => {
-        let index = -1;
-        let dc_monitor = dc['monitor'] ?? {};
-        for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
-          let m = Main.layoutManager.monitors[i];
-          if (m.x == dc_monitor['x'] && m.y == dc_monitor['y']) {
-            index = m.index;
-            break;
-          }
-        }
-        if (index != -1) {
-          let d = this.createDock();
-          d._monitorIndex = index;
-          d._config = dc;
-        }
-      });
-      return;
+    } else if (this.multi_monitor_preference === 1) {
+      desired = monitors.map((monitor) => ({ index: monitor.index, config: null }));
+    } else if (monitors.length) {
+      desired = [{ index: this._queryDisplay(0), config: null }];
     }
 
-    // only one dock
-    if (
-      Main.layoutManager.monitors.length == 1 ||
-      this.multi_monitor_preference == 0
-    ) {
-      if (this.docks.length > 1) {
-        this.destroyDocks();
-      }
-      if (this.docks.length == 0) {
-        this.createDock();
-      }
-      return;
-    }
-
-    if (
-      Main.layoutManager.monitors.length > 0 &&
-      this.multi_monitor_preference == 1
-    ) {
-      let count = Main.layoutManager.monitors.length;
-      if (count != this.docks.length) {
-        this.destroyDocks();
-      }
-
-      for (let i = 0; i < count; i++) {
-        let d = this.createDock();
-        d._monitorIndex = i;
-      }
-    }
+    // Config loading and monitor signals can both reach startup. Reusing the
+    // same topology prevents duplicate docks and their animation subscribers.
+    if (desired.length === this.docks.length && desired.every((entry, i) =>
+      this.docks[i]._monitorIndex === entry.index && this.docks[i]._config === entry.config)) return;
+    this.destroyDocks();
+    for (const { index, config } of desired) this.createDock(index, config);
   }
 
   destroyDocks() {
-    (this.docks || []).forEach((dock) => {
-      dock.undock();
-      dock.cancelAnimations();
-      dock.destroyDash();
-      dock.destroy();
-      this.dock = null;
+    const docks = this.docks || [];
+    this.docks = [];
+    this.dock = null;
+    this.listeners = this.services ? [this.services] : [];
+    docks.forEach((dock) => {
+      dock._destroyed = true;
+      // Native actors may already be partially disposed after a session or
+      // monitor change. Still release every other actor and timer if one
+      // cleanup step fails.
+      for (const method of ['undock', 'cancelAnimations', 'destroyDash', 'destroy']) {
+        try {
+          dock[method]();
+        } catch (error) {
+          console.error(`Dock ${method}: ${error.message ?? error}`);
+        }
+      }
     });
     this.docks = [];
     // stop forwarding display events to the destroyed docks
@@ -147,7 +125,10 @@ export default class Dash2DockLiteExt extends Extension {
   _showMainOverviewDash(show) {
     if (show) {
       // the dash container is hidden on startup-complete
-      Main.overview.dash.last_child.visible = true;
+      if (Main.overview.dash.last_child) {
+        Main.overview.dash.last_child.visible = true;
+      }
+      Main.overview.dash.visible = true;
     }
     Main.overview.dash.opacity = show ? 255 : 0;
     // Main.overview.dash._background.opacity = show ? 255 : 0;
@@ -171,23 +152,30 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _patchMainOverviewDash() {
-    // Gnome 50+: a Dash item gets its icon only once styled, and items made
-    // while the hidden dash redisplays (favorites reordered on the dock)
-    // never are, so Dash._adjustIconSize throws on them
+    // The hidden overview can redisplay before style initialization creates
+    // its first icon texture. Defer sizing until normal style initialization
+    // finishes; creating a child here can re-enter allocation or teardown.
     let dash = Main.overview.dash;
-    let adjustIconSize = Object.getPrototypeOf(dash)._adjustIconSize;
-    dash._adjustIconSize = function () {
-      this._box.get_children().forEach((c) => {
-        let icon = c.child?._delegate?.icon;
-        if (icon && !icon.icon && icon._createIconTexture) {
-          icon._createIconTexture(icon.iconSize);
-        }
-      });
-      return adjustIconSize.call(this);
+    let adjustIconSize = dash._adjustIconSize;
+    const hadOwnAdjustment = Object.prototype.hasOwnProperty.call(dash, '_adjustIconSize');
+    const wrapper = function (...args) {
+      if (this._d2dlDestroying) return;
+      const firstItem = this._box.get_children().find((item) =>
+        item.child?._delegate?.icon && !item.animatingOut
+      ) ?? this._showAppsIcon;
+      const firstIcon = firstItem?.child?._delegate?.icon ?? firstItem?.icon;
+      if (!firstIcon?.icon || firstItem._d2dlDestroying ||
+          firstItem.child?._d2dlDestroying || firstIcon._d2dlDestroying || firstIcon._d2dlCreating ||
+          (firstIcon._iconBin && firstIcon._iconBin.child !== firstIcon.icon)) return;
+      return adjustIconSize.apply(this, args);
     };
+    this._overviewDashAdjustment = { dash, adjustIconSize, hadOwnAdjustment, wrapper };
+    dash._adjustIconSize = wrapper;
   }
 
   enable() {
+    this._enabled = true;
+    this._lifecycleId = (this._lifecycleId ?? 0) + 1;
     Main.overview.d2dl = this;
 
     // Use UUID to avoid conflicting with other instances of this extensions (multi user setup)
@@ -198,7 +186,7 @@ export default class Dash2DockLiteExt extends Extension {
     // three available timers
     // for persistent runs
     this._timer = new Timer('loop timer');
-    this._timer.initialize(3500);
+    this._timer.initialize(1000);
 
     // for animation runs
     // resolution (15) will be modified by animation-fps
@@ -217,7 +205,7 @@ export default class Dash2DockLiteExt extends Extension {
     this._style = new Style();
 
     this._enableSettings();
-    this._loadConfig();
+    this._loadConfig().catch((error) => console.error(error));
 
     // no longer needed
     // this._disable_borders = this.border_radius > 0;
@@ -245,8 +233,9 @@ export default class Dash2DockLiteExt extends Extension {
     this.services.setupFolderIcons();
 
     // todo follow animator and autohider protocol
-    this.services.enable();
-    this._onCheckServices();
+    if (!Main.sessionMode.isLocked && !Main.sessionMode.isGreeter) this.services.enable();
+    this._servicesUpdatedAt = null;
+    this._syncServiceTimer();
 
     this._updateAnimationFPS();
     this._updateShrink();
@@ -261,48 +250,73 @@ export default class Dash2DockLiteExt extends Extension {
     console.log('dash2dock-lite enabled');
 
     // to allow dynamic imports
-    this._loTimer.runOnce(() => {
+    this._startupSeq = this._loTimer.runOnce(() => {
+      this._startupSeq = null;
       this.startUp();
     }, 250);
   }
 
   disable() {
-    this._timer?.shutdown();
-    this._hiTimer?.shutdown();
-    this._loTimer?.shutdown();
-    this._diagnosticTimer?.shutdown();
-    // null later
+    this._enabled = false;
+    this._lifecycleId = (this._lifecycleId ?? 0) + 1;
+    this._loTimer?.cancel(this._startupSeq);
+    this._loTimer?.cancel(this._startupRefreshSeq);
+    this._startupSeq = null;
+    this._startupRefreshSeq = null;
+    if (this._debounceStyleSeq) {
+      this._hiTimer?.cancel(this._debounceStyleSeq);
+      this._debounceStyleSeq = null;
+    }
+    if (this._iconSpacingDebounceSeq) {
+      this._loTimer?.cancel(this._iconSpacingDebounceSeq);
+      this._iconSpacingDebounceSeq = null;
+    }
 
     this._removeEvents();
     this._disableSettings();
 
     this._updateShrink(true);
-    this._updateLayout(true);
-    this._updateAutohide(true);
+    this._restorePanelStyle();
     this._unloadConfig();
 
     this._showMainOverviewDash(true);
-    delete Main.overview.dash._adjustIconSize;
+    const adjustment = this._overviewDashAdjustment;
+    if (adjustment && adjustment.dash._adjustIconSize === adjustment.wrapper) {
+      if (adjustment.hadOwnAdjustment) adjustment.dash._adjustIconSize = adjustment.adjustIconSize;
+      else delete adjustment.dash._adjustIconSize;
+    }
+    this._overviewDashAdjustment = null;
+
+    this.integrations?.disable();
 
     this.destroyDocks();
     this.docks = [];
 
-    this.integrations.disable();
     this.integrations = null;
 
-    this.services.disable();
+    this.services?.disable();
     this.services = null;
+    this.listeners = [];
+
+    this._timer?.shutdown();
+    this._serviceSeq = null;
+    this._servicesUpdatedAt = null;
+    this._hiTimer?.shutdown();
+    this._loTimer?.shutdown();
+    this._diagnosticTimer?.shutdown();
 
     this._timer = null;
     this._hiTimer = null;
     this._loTimer = null;
     this._diagnosticTimer = null;
 
-    this._style.unloadAll();
+    this._style?.unloadAll();
     this._style = null;
 
-    delete this.icon_theme;
     this.icon_theme = null;
+    this._iconTheme = null;
+    this.simulated_pointer = null;
+    this._inOverview = false;
 
     Main.overview.d2dl = null;
     console.log('dash2dock-lite disabled');
@@ -333,8 +347,12 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   startUp() {
+    if (!this._enabled || Main.sessionMode.isLocked || Main.sessionMode.isGreeter) return;
     this.createTheDocks();
-    this._loTimer.runOnce(() => {
+    this._loTimer.cancel(this._startupRefreshSeq);
+    this._startupRefreshSeq = this._loTimer.runOnce(() => {
+      this._startupRefreshSeq = null;
+      if (!this._enabled) return;
       this._updateWidgetStyle();
       this.animate({ refresh: true });
       this.docks.forEach((dock) => {
@@ -375,37 +393,35 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   async _loadConfig() {
+    const lifecycleId = this._lifecycleId;
+    const isCurrent = () => this._enabled && lifecycleId === this._lifecycleId;
     this._config = {};
     let fn_config = configFile('config.json');
     if (fn_config.query_exists(null)) {
       try {
         const contents = await loadFile(fn_config);
-        this._config = JSON.parse(contents);
+        if (!isCurrent()) return;
+        const config = JSON.parse(contents);
+        if (config && typeof config === 'object' && !Array.isArray(config)) this._config = config;
       } catch (err) {
         console.log(err);
       }
 
+      if (!isCurrent()) return;
+
       // precompute
       {
-        let icon_size = this._config['icon-size'] ?? 0;
-        if (typeof icon_size == 'string') {
-          icon_size = parseInt(icon_size);
-        }
-        this._config.icon_size = icon_size > 0 ? icon_size : null;
+        const value = this._config['icon-size'];
+        const iconSize = typeof value === 'string' || typeof value === 'number'
+          ? Number(value) : NaN;
+        this._config.icon_size = Number.isFinite(iconSize) && iconSize > 0 ? iconSize : null;
       }
 
       {
-        let speed_up = this._config['speed-up'] ?? 1;
-        if (typeof speed_up == 'string') {
-          speed_up = parseFloat(speed_up);
-        }
-        if (speed_up > 4) {
-          speed_up = 4;
-        }
-        if (speed_up < 0.5) {
-          speed_up = 0.5;
-        }
-        this._config.speed_up = speed_up;
+        const value = this._config['speed-up'];
+        const speed = typeof value === 'string' || typeof value === 'number'
+          ? Number(value) : NaN;
+        this._config.speed_up = Number.isFinite(speed) ? Math.max(0.5, Math.min(4, speed)) : 1;
       }
 
       // the config may override the file explorer used by these items
@@ -416,13 +432,14 @@ export default class Dash2DockLiteExt extends Extension {
     if (fn_icons.query_exists(null)) {
       try {
         const contents = await loadFile(fn_icons);
+        if (!isCurrent()) return;
         let json = JSON.parse(contents);
         if (json['icons']) {
           this.icon_map = json['icons'];
           this.icon_map_cache = {};
           Object.keys(this.icon_map).forEach((k) => {
             let path = this.icon_map[k];
-            if (path.toLowerCase().endsWith('.svg')) {
+            if (typeof path === 'string' && path.toLowerCase().endsWith('.svg')) {
               let file = configFile(path);
               if (file.query_exists(null)) {
                 console.log(`loading icon ${file.get_path()}`);
@@ -436,7 +453,7 @@ export default class Dash2DockLiteExt extends Extension {
           this.app_map_cache = {};
           Object.keys(this.app_map).forEach((k) => {
             let path = this.app_map[k];
-            if (path.toLowerCase().endsWith('.svg')) {
+            if (typeof path === 'string' && path.toLowerCase().endsWith('.svg')) {
               let file = configFile(path);
               if (file.query_exists(null)) {
                 console.log(`loading icon ${file.get_path()}`);
@@ -450,24 +467,38 @@ export default class Dash2DockLiteExt extends Extension {
       }
     }
 
+    if (!isCurrent()) return;
+
     let fn_style = configFile('style.css');
     if (fn_style.query_exists(null)) {
       let ctx = St.ThemeContext.get_for_stage(global.stage);
       let theme = ctx.get_theme();
       theme.load_stylesheet(fn_style);
+      this._configStylesheet = fn_style;
+    }
+
+    if (this.docks && this.docks.length) {
+      if (this._config.docks) {
+        this.createTheDocks();
+      } else {
+        this.docks.forEach((d) => {
+          d.layout();
+        });
+      }
     }
   }
 
   _unloadConfig() {
     this.icon_map = {};
     this.icon_map_cache = {};
+    this.app_map = {};
     this.app_map_cache = {};
 
-    let fn_style = configFile('style.css');
-    if (fn_style.query_exists(null)) {
+    if (this._configStylesheet) {
       let ctx = St.ThemeContext.get_for_stage(global.stage);
       let theme = ctx.get_theme();
-      theme.unload_stylesheet(fn_style);
+      theme.unload_stylesheet(this._configStylesheet);
+      this._configStylesheet = null;
     }
   }
 
@@ -555,13 +586,13 @@ export default class Dash2DockLiteExt extends Extension {
           break;
         case 'max-recent-items':
           this.services._debounceCheckDownloads();
-          this.services._debounceCheckRecents();
           break;
         case 'apps-icon':
         case 'apps-icon-front':
         case 'calendar-icon':
         case 'clock-icon':
         case 'favorites-only': {
+          this._syncServiceTimer();
           this.animate({ refresh: true });
           break;
         }
@@ -601,7 +632,12 @@ export default class Dash2DockLiteExt extends Extension {
         case 'multi-monitor-preference':
           this._updateMultiMonitorPreference();
           break;
-        case 'icon-size':
+        case 'icon-size': {
+          this._updateShrink();
+          this._updateLayout();
+          this.animate({ refresh: true });
+          break;
+        }
         case 'preferred-monitor': {
           this._updateLayout();
           this.animate({ refresh: true });
@@ -617,8 +653,7 @@ export default class Dash2DockLiteExt extends Extension {
           this.animate();
           break;
         }
-        case 'shrink-icons':
-        case 'icon-size': {
+        case 'shrink-icons': {
           this._updateShrink();
           this.animate();
           break;
@@ -674,8 +709,9 @@ export default class Dash2DockLiteExt extends Extension {
         case 'downloads-icon':
         case 'documents-icon':
         case 'trash-icon': {
-          // the trash may have filled while its icon was off
-          this.services?.checkTrash();
+          if (name === 'downloads-icon') this.services?.setupDownloads();
+          if (name === 'trash-icon') this.services?.setupTrash();
+          this._syncServiceTimer();
           this._updateLayout();
           this.animate({ refresh: true });
           break;
@@ -695,7 +731,7 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _disableSettings() {
-    this._settingsKeys.disconnectSettings();
+    this._settingsKeys?.disconnectSettings();
     this._settingsKeys = null;
     this._settings = null;
 
@@ -761,7 +797,7 @@ export default class Dash2DockLiteExt extends Extension {
     Main.layoutManager.connectObject(
       'startup-complete',
       () => {
-        Main.overview.dash.last_child.visible = false;
+        if (Main.overview.dash.last_child) Main.overview.dash.last_child.visible = false;
         Main.overview.dash.opacity = 0;
         // fix for topbar not blurring
         this._updateBlurredBackground();
@@ -770,15 +806,6 @@ export default class Dash2DockLiteExt extends Extension {
       'monitors-changed',
       () => {
         this._updateMultiMonitorPreference();
-      },
-      this
-    );
-
-    Main.messageTray.connectObject(
-      'queue-changed',
-      (count) => {
-        this.services.checkNotifications();
-        this.animate();
       },
       this
     );
@@ -819,20 +846,12 @@ export default class Dash2DockLiteExt extends Extension {
       this
     );
 
-    // move to services.js
-    this._timer.runLoop(
-      () => {
-        this._onCheckServices();
-      },
-      SERVICES_UPDATE_INTERVAL,
-      'services'
-    );
   }
 
   _removeEvents() {
-    this._appSystem.disconnectObject(this);
+    this._appSystem?.disconnectObject(this);
     this._appSystem = null;
-    this._appFavorites.disconnectObject(this);
+    this._appFavorites?.disconnectObject(this);
     this._appFavorites = null;
     Main.extensionManager.disconnectObject(this);
     Main.messageTray.disconnectObject(this);
@@ -855,11 +874,14 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _onIconThemeChanged() {
-    if (this.animate_icons) {
+    if (this.services?._enabled) {
       this.services.disable();
       this.services.enable();
+      this._servicesUpdatedAt = null;
+      this._syncServiceTimer();
     }
-    this._iconTheme = St.IconTheme.new();
+    this.icon_theme = St.IconTheme.new();
+    this._iconTheme = this.icon_theme;
     this._updateStyle();
     this.recreateAllDocks();
   }
@@ -918,13 +940,59 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _onSessionUpdated() {
+    if (!this._enabled) return;
+    if (Main.sessionMode.isLocked || Main.sessionMode.isGreeter) {
+      this._loTimer.cancel(this._startupSeq);
+      this._loTimer.cancel(this._startupRefreshSeq);
+      this._startupSeq = null;
+      this._startupRefreshSeq = null;
+      this._restorePanelStyle();
+      this._timer?.cancel(this._serviceSeq);
+      this._timer?.stop();
+      this._serviceSeq = null;
+      this._servicesUpdatedAt = null;
+      this.services?.disable();
+      this.destroyDocks();
+      return;
+    }
+    if (this.services && !this.services._enabled) this.services.enable();
+    this._syncServiceTimer();
+    this.startUp();
     this.animate();
   }
 
   _onCheckServices() {
-    if (!this.services) return; // todo why does this happen?
-    // todo convert services time in seconds
-    this.services.update(SERVICES_UPDATE_INTERVAL);
+    if (!this.services) return;
+    const now = GLib.get_monotonic_time();
+    const elapsed = this._servicesUpdatedAt === null || this._servicesUpdatedAt === undefined
+      ? 0 : Math.max(0, (now - this._servicesUpdatedAt) / 1000);
+    this._servicesUpdatedAt = now;
+    this.services.update(elapsed);
+  }
+
+  _syncServiceTimer() {
+    if (!this._timer) return;
+    this._timer.cancel(this._serviceSeq);
+    this._timer.stop();
+    this._serviceSeq = null;
+    if (!this._enabled || !this.services ||
+        Main.sessionMode.isLocked || Main.sessionMode.isGreeter) {
+      this._servicesUpdatedAt = null;
+      return;
+    }
+    this._onCheckServices();
+    const delay = this.services.nextUpdateDelay();
+    if (delay === null) {
+      this._servicesUpdatedAt = null;
+      return;
+    }
+    // The service timer sleeps until actual work is due (normally a minute),
+    // rather than waking repeatedly to check counters for disabled features.
+    this._timer.start(delay);
+    this._serviceSeq = this._timer.runOnce(() => {
+      this._serviceSeq = null;
+      this._syncServiceTimer();
+    }, delay, 'services');
   }
 
   _updateWidgetStyle() {
@@ -950,6 +1018,33 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _updateBlurredBackground() {}
+
+  _updatePanelTransparency(transparent) {
+    if (!transparent || !Main.panel) {
+      this._restorePanelStyle();
+      return;
+    }
+    const panel = Main.panel;
+    const patch = this._panelStylePatch;
+    if (patch && patch.panel === panel && panel.style === patch.applied) return;
+    this._restorePanelStyle();
+    const previous = panel.style;
+    const baseStyle = previous?.trim() ?? '';
+    const prefix = baseStyle ? `${baseStyle}${baseStyle.endsWith(';') ? '' : ';'} ` : '';
+    const applied = `${prefix}border: 0px; background: transparent;`;
+    this._panelStylePatch = { panel, previous, applied };
+    panel.style = applied;
+  }
+
+  _restorePanelStyle() {
+    const patch = this._panelStylePatch;
+    this._panelStylePatch = null;
+    try {
+      if (patch && patch.panel.style === patch.applied) patch.panel.style = patch.previous;
+    } catch (error) {
+      console.warn(`Unable to restore panel style: ${error.message}`);
+    }
+  }
 
   _getPreferredColorScheme() {
     let scheme = 'light';
@@ -999,9 +1094,14 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _updateMultiMonitorPreference() {
+    if (!this._enabled) return;
     // console.log('update monitors');
     this.destroyDocks();
-    this._loTimer.runOnce(() => {
+    this._loTimer.cancel(this._startupSeq);
+    this._loTimer.cancel(this._startupRefreshSeq);
+    this._startupRefreshSeq = null;
+    this._startupSeq = this._loTimer.runOnce(() => {
+      this._startupSeq = null;
       this.startUp();
     }, 500);
   }

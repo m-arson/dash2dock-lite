@@ -19,6 +19,8 @@ void main() {
 }
 `;
 
+let cachedShaderPath;
+let cachedShaderSource;
 const getTintShaderSource = (extensionDir) => {
   const SHADER_PATH = GLib.build_filenamev([
     extensionDir,
@@ -26,8 +28,11 @@ const getTintShaderSource = (extensionDir) => {
     'tint_effect.glsl',
   ]);
 
+  if (cachedShaderPath === SHADER_PATH) return cachedShaderSource;
   try {
-    return Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderSource = Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderPath = SHADER_PATH;
+    return cachedShaderSource;
   } catch (e) {
     log(`[d2dl] error loading shader from ${SHADER_PATH}: ${e}`);
     return null;
@@ -46,7 +51,7 @@ const getTintShaderSource = (extensionDir) => {
 const D2DATintEffectBase = GObject.registerClass(
   {},
   class D2DATintEffect extends Clutter.ShaderEffect {
-    _init(params) {
+    _init(params = {}) {
       this._red = null;
       this._green = null;
       this._blue = null;
@@ -56,10 +61,9 @@ const D2DATintEffectBase = GObject.registerClass(
 
       // initialize without color as a parameter
 
-      let _color = params.color;
-      delete params.color;
+      const { color: _color, ...effectParams } = params;
 
-      super._init(params);
+      super._init(effectParams);
 
       // set shader color
 
@@ -69,8 +73,10 @@ const D2DATintEffectBase = GObject.registerClass(
     preload(path) {
       // set shader source
       this._source = getTintShaderSource(path);
-      if (this._source && !USE_SNIPPET)
+      if (this._source && !USE_SNIPPET) {
         this.set_shader_source(legacyShaderSource(this._source));
+        this.set_uniform_value('tex', 0);
+      }
 
       this.update_enabled();
     }
@@ -151,14 +157,6 @@ const D2DATintEffectBase = GObject.registerClass(
       this.set_enabled(this.blend > 0 && this._static && !!this._source);
     }
 
-    vfunc_paint_target(paint_node = null, paint_context = null) {
-      if (!USE_SNIPPET) this.set_uniform_value('tex', 0);
-
-      if (paint_node && paint_context)
-        super.vfunc_paint_target(paint_node, paint_context);
-      else if (paint_node) super.vfunc_paint_target(paint_node);
-      else super.vfunc_paint_target();
-    }
   }
 );
 
@@ -171,7 +169,7 @@ export const TintEffect = USE_SNIPPET
         vfunc_get_static_snippet() {
           return Cogl.Snippet.new(
             Cogl.SnippetHook.FRAGMENT,
-            this._source,
+            this._source || 'vec4 d2da_effect(vec4 color) { return color; }',
             'cogl_color_out = d2da_effect(cogl_color_out);'
           );
         }

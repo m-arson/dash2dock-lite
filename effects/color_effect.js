@@ -6,7 +6,21 @@ import Shell from 'gi://Shell';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
+import Cogl from 'gi://Cogl';
 
+// Gnome 51 replaced the GLSL source of ShaderEffect with Cogl snippets
+const USE_SNIPPET = !Clutter.ShaderEffect.prototype.set_shader_source;
+
+// color_effect.glsl provides d2da_effect(); wrap it for the legacy API
+const legacyShaderSource = (source) => `uniform sampler2D tex;
+${source}
+void main() {
+    cogl_color_out = d2da_effect(texture2D(tex, cogl_tex_coord_in[0].st));
+}
+`;
+
+let cachedShaderPath;
+let cachedShaderSource;
 const getColorEffectShaderSource = (extensionDir) => {
   const SHADER_PATH = GLib.build_filenamev([
     extensionDir,
@@ -14,27 +28,21 @@ const getColorEffectShaderSource = (extensionDir) => {
     'color_effect.glsl',
   ]);
 
+  if (cachedShaderPath === SHADER_PATH) return cachedShaderSource;
   try {
-    return Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderSource = Shell.get_file_contents_utf8_sync(SHADER_PATH);
+    cachedShaderPath = SHADER_PATH;
+    return cachedShaderSource;
   } catch (e) {
     log(`[d2dl] error loading shader from ${SHADER_PATH}: ${e}`);
     return null;
   }
 };
 
-/// New Clutter Shader Effect that simply mixes a color in, the class applies
-/// the GLSL shader programmed into vfunc_get_static_shader_source and applies
-/// it to an Actor.
-///
-/// Clutter Shader Source Code:
-/// https://github.com/GNOME/clutter/blob/master/clutter/clutter-shader-effect.c
-///
-/// GJS Doc:
-/// https://gjs-docs.gnome.org/clutter10~10_api/clutter.shadereffect
-export const ColorEffect = GObject.registerClass(
+const D2DAColorEffectBase = GObject.registerClass(
   {},
   class D2DAColorShader extends Clutter.ShaderEffect {
-    _init(params) {
+    _init(params = {}) {
       this._red = null;
       this._green = null;
       this._blue = null;
@@ -44,10 +52,9 @@ export const ColorEffect = GObject.registerClass(
 
       // initialize without color as a parameter
 
-      let _color = params.color;
-      delete params.color;
+      const { color: _color, ...effectParams } = params;
 
-      super._init(params);
+      super._init(effectParams);
 
       // set shader color
       if (_color) this.color = _color;
@@ -56,7 +63,10 @@ export const ColorEffect = GObject.registerClass(
     preload(path) {
       // set shader source
       this._source = getColorEffectShaderSource(path);
-      if (this._source) this.set_shader_source(this._source);
+      if (this._source && !USE_SNIPPET) {
+        this.set_shader_source(legacyShaderSource(this._source));
+        this.set_uniform_value('tex', 0);
+      }
 
       this.update_enabled();
     }
@@ -102,6 +112,12 @@ export const ColorEffect = GObject.registerClass(
     }
 
     set blend(value) {
+      if (value > 0.5) {
+        value *= 0.75;
+        if (value < 0.5) {
+          value = 0.5;
+        }
+      }
       if (this._blend !== value) {
         this._blend = value;
 
@@ -128,16 +144,23 @@ export const ColorEffect = GObject.registerClass(
     }
 
     update_enabled() {
-      this.set_enabled(this.blend > 0 && this._static);
+      this.set_enabled(this.blend > 0 && this._static && !!this._source);
     }
 
-    vfunc_paint_target(paint_node = null, paint_context = null) {
-      this.set_uniform_value('tex', 0);
-
-      if (paint_node && paint_context)
-        super.vfunc_paint_target(paint_node, paint_context);
-      else if (paint_node) super.vfunc_paint_target(paint_node);
-      else super.vfunc_paint_target();
-    }
   }
 );
+
+export const ColorEffect = USE_SNIPPET
+  ? GObject.registerClass(
+      {},
+      class D2DAColorSnippetEffect extends D2DAColorEffectBase {
+        vfunc_get_static_snippet() {
+          return Cogl.Snippet.new(
+            Cogl.SnippetHook.FRAGMENT,
+            this._source || 'vec4 d2da_effect(vec4 color) { return color; }',
+            'cogl_color_out = d2da_effect(cogl_color_out);'
+          );
+        }
+      }
+    )
+  : D2DAColorEffectBase;

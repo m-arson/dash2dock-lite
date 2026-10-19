@@ -23,12 +23,19 @@ export const DebugOverlay = GObject.registerClass(
       this.objects = [];
 
       this._canvas = new Clutter.Canvas();
-      this._canvas.connect('draw', this.on_draw.bind(this));
+      this._drawSignalId = this._canvas.connect('draw', this.on_draw.bind(this));
       this._canvas.invalidate();
       this._canvas.set_size(this._width, this._height);
       this.set_size(this._width, this._height);
       this.set_content(this._canvas);
       this.reactive = false;
+
+      this.connect('destroy', () => {
+        this._canvas.disconnect(this._drawSignalId);
+        this.set_content(null);
+        this._canvas = null;
+        this.objects = [];
+      });
     }
 
     resize(width, height) {
@@ -60,10 +67,12 @@ export const DebugOverlay = GObject.registerClass(
 
       ctx.save();
 
-      this.onDraw(ctx);
-
-      ctx.restore();
-      ctx.$dispose();
+      try {
+        this.onDraw(ctx);
+      } finally {
+        ctx.restore();
+        ctx.$dispose();
+      }
     }
 
     onDraw(ctx) {
@@ -96,7 +105,5 @@ export const DebugOverlay = GObject.registerClass(
         }
       });
     }
-
-    destroy() {}
   }
 );

@@ -24,6 +24,8 @@ export const Style = class {
         console.log(err);
       }
     });
+    this.styles = {};
+    this.style_contents = {};
   }
 
   build(name, style_array) {
@@ -48,7 +50,6 @@ export const Style = class {
       this.styles[name] = fn;
     }
 
-    this.style_contents[name] = content;
     const [, etag] = fn.replace_contents(
       content,
       null,
@@ -58,6 +59,7 @@ export const Style = class {
     );
 
     theme.load_stylesheet(fn);
+    this.style_contents[name] = content;
 
     // log(content);
   }
@@ -73,9 +75,9 @@ export const Style = class {
     let r = Math.floor(color[0] * 255).toString(16);
     let g = Math.floor(color[1] * 255).toString(16);
     let b = Math.floor(color[2] * 255).toString(16);
-    if (r.length == 1) r += r;
-    if (g.length == 1) g += g;
-    if (b.length == 1) b += b;
+    if (r.length == 1) r = `0${r}`;
+    if (g.length == 1) g = `0${g}`;
+    if (b.length == 1) b = `0${b}`;
     let res = `#${r}${g}${b}`;
     console.log(`${color} ${res}`);
     return res;

@@ -5,11 +5,23 @@
 
 # Current Issues
 
-* vertical layout does not support rearranging icons (as this is dependent on Gnome's own Dash which doesn't support this properly)
 * vertical layout does not support Apps Icon at front
 
 # Next Release
 
+* stop animation when hover, tooltips, autohide slides and Downloads pullouts settle; wake it again on input
+* reuse unchanged dock layout and final bounds, avoid forced offscreen buffers and allocate indicator canvases only when needed
+* use notification signals and service deadlines instead of idle polling; detach disabled folder/volume watchers and suspend services while locked
+* coalesce Downloads scan bursts, fetch rich metadata only for displayed rows and skip redraws for unchanged results
+* reduce pullout, autohide and Blur My Shell work; release resources held by closed pullouts and chained integration hooks
+* set shader samplers once instead of updating uniforms on every paint; share shader sources between instances
+* reorder pinned icons at the pointer position on horizontal and vertical docks; reuse existing app actors and cancel stale favorite writes
+* keep animation timers usable after callback failures, finish zoom and bounce cleanup, and prevent callbacks from reaching destroyed docks
+* release window, settings, canvas, menu and integration resources on shutdown; reject stale monitor/config/file results
+* scan Downloads and Trash asynchronously without blocking the Shell main loop or retaining every download entry; rescan Trash after changes received during an active scan
+* fix transformed input areas, fullscreen/monitor pressure handling, single-icon backgrounds, settings feedback and Cairo context disposal
+* restore Show Apps hover labels and close the app grid on a second click
+* add automated regression suites (`npm test`) and JavaScript syntax checks (`npm run check`)
 * Bug fixes
 * add Gnome 51 support (icon effects use Cogl snippets)
 * fix Gnome 50 errors: dock item right-click menu, scroll to cycle windows

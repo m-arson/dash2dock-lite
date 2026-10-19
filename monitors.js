@@ -39,8 +39,9 @@ export const MonitorsConfig = GObject.registerClass(
       );
 
       // Connecting to a D-Bus signal
-      this._monitorsConfigProxy.connectSignal('MonitorsChanged', () =>
-        this._updateResources()
+      this._monitorsSignalId = this._monitorsConfigProxy.connectSignal(
+        'MonitorsChanged',
+        () => this._updateResources()
       );
 
       this._primaryMonitor = null;
@@ -49,8 +50,26 @@ export const MonitorsConfig = GObject.registerClass(
       this._updateResources();
     }
 
+    destroy() {
+      this._requestSerial = (this._requestSerial ?? 0) + 1;
+      if (this._monitorsSignalId && this._monitorsConfigProxy) {
+        try {
+          this._monitorsConfigProxy.disconnectSignal(this._monitorsSignalId);
+        } catch (e) {}
+        this._monitorsSignalId = null;
+      }
+      this._monitorsConfigProxy = null;
+      this._monitors = [];
+      this._logicalMonitors = [];
+      this._primaryMonitor = null;
+    }
+
     _updateResources() {
-      this._monitorsConfigProxy.GetCurrentStateRemote((resources, err) => {
+      if (!this._monitorsConfigProxy) return;
+      const proxy = this._monitorsConfigProxy;
+      const requestSerial = this._requestSerial = (this._requestSerial ?? 0) + 1;
+      proxy.GetCurrentStateRemote((resources, err) => {
+        if (this._monitorsConfigProxy !== proxy || requestSerial !== this._requestSerial) return;
         if (err) {
           logError(err);
           return;
@@ -74,7 +93,7 @@ export const MonitorsConfig = GObject.registerClass(
             vendor,
             product,
             serial,
-            displayName: props['display-name'].unpack(),
+            displayName: props['display-name']?.unpack() ?? connector,
           });
         }
 
@@ -108,7 +127,7 @@ export const MonitorsConfig = GObject.registerClass(
         if (activeMonitors.length > 1 && logicalMonitors.length === 1) {
           // We're in cloning mode, so let's just activate the primary monitor
           this._monitors.forEach((m) => (m.active = false));
-          this._primaryMonitor.active = true;
+          if (this._primaryMonitor) this._primaryMonitor.active = true;
         }
 
         // console.log(this._monitors);

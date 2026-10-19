@@ -11,6 +11,7 @@ import { Dash } from 'resource:///org/gnome/shell/ui/dash.js';
 
 import Shell from 'gi://Shell';
 import Gio from 'gi://Gio';
+import GioUnix from 'gi://GioUnix';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
@@ -44,14 +45,14 @@ class DockItemMenu extends PopupMenu.PopupMenu {
       this._onActivate();
     });
 
-    desktopApp.list_actions().forEach((action) => {
+    (desktopApp.list_actions?.() ?? []).forEach((action) => {
       let name = desktopApp.get_action_name(action);
       this.addAction(name, () => {
         let workspaceManager = global.workspace_manager;
         let workspaceIndex = workspaceManager.get_active_workspace_index();
         let ctx = global.create_app_launch_context(0, workspaceIndex);
         desktopApp.launch_action(action, ctx);
-        this.item.dock.extension.animate({ refresh: true });
+        this.item?.dock?.extension.animate({ refresh: true });
       });
     });
   }
@@ -59,9 +60,29 @@ class DockItemMenu extends PopupMenu.PopupMenu {
   _onActivate() {}
 
   popup() {
-    this.open(BoxPointer.PopupAnimation.FULL);
+    if (this._destroyed) return;
+    try {
+      if (BoxPointer.PopupAnimation?.FULL !== undefined) {
+        this.open(BoxPointer.PopupAnimation.FULL);
+      } else {
+        this.open({ animate: true });
+      }
+    } catch {
+      this.open({ animate: true });
+    }
     // removed in Gnome 50
-    this._menuManager.ignoreRelease?.();
+    this._menuManager?.ignoreRelease?.();
+  }
+
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+    super.destroy();
+    this.item = null;
+    this.desktopApp = null;
+    this._newWindowItem = null;
+    this._menuManager = null;
+    this._onActivate = () => {};
   }
 }
 
@@ -114,11 +135,11 @@ export const DockItemDotsOverlay = GObject.registerClass(
         }
       }
 
-      // renderer.translationX = icon._icon.translationX + offsetX;
-      // renderer.translationY = icon._icon.translationY + offsetY;
+      // renderer.translation_x = icon._icon.translation_x + offsetX;
+      // renderer.translation_y = icon._icon.translation_y + offsetY;
 
-      renderer.translationX = offsetX;
-      renderer.translationY = offsetY;
+      renderer.translation_x = offsetX;
+      renderer.translation_y = offsetY;
 
       let options = extension.running_indicator_style_options;
       let running_indicator_style = options[extension.running_indicator_style];
@@ -158,8 +179,8 @@ export const DockItemBadgeOverlay = GObject.registerClass(
         options[extension.notification_badge_style];
       let notification_badge_color = extension.notification_badge_color;
 
-      renderer.translationX = renderer.width / 1.5;
-      // renderer.translationY = icon._icon.translationY;
+      renderer.translation_x = renderer.width / 1.5;
+      // renderer.translation_y = icon._icon.translation_y;
 
       renderer.set_state({
         count: noticesCount,
@@ -179,32 +200,63 @@ export const DockIcon = GObject.registerClass(
       super._init(app);
       this._dot.visible = false;
 
-      this._draggable._onButtonPress = () => {
-        return Clutter.EVENT_PROPAGATE;
-      };
-      this._draggable._onTouchEvent = () => {
-        return Clutter.EVENT_PROPAGATE;
-      };
-      this._draggable._grabActor = () => {};
+      // Disable drag gestures for GNOME 49+ and previous versions
+      if (this._draggable) {
+        if (this._draggable._dndGesture) {
+          this._draggable._dndGesture.set_enabled(false);
+        }
+        this._draggable.inhibit = true;
+        this._draggable.startDrag = () => {};
+        this._draggable._onButtonPress = () => Clutter.EVENT_PROPAGATE;
+        this._draggable._onTouchEvent = () => Clutter.EVENT_PROPAGATE;
+        this._draggable._grabActor = () => {};
+      }
 
-      // presses on the inner icon bubble up here; handle them on the whole
-      // item since the icon may be allocated no space (Gnome 42)
+      // Native AppIcon routes pointer, touch and keyboard activation through
+      // clicked/activate. Handling button-press as well launches items twice.
       this.connectObject(
-        'button-press-event',
-        (actor, evt) => {
-          let container = this.get_parent();
-          if (evt.get_button() != 1) {
-            if (container._menu) {
-              container._menu.popup();
-            }
-          } else {
-            if (container._onClick) {
-              container._onClick();
-            }
-          }
+        'notify::hover',
+        () => {
+          const container = this.get_parent();
+          if (this.hover) container?.showLabel();
+          else container?.hideLabel();
         },
         this
       );
+    }
+
+    activate(button) {
+      let container = this.get_parent();
+      if (button === Clutter.BUTTON_SECONDARY) {
+        this.popupMenu();
+      } else if (container?._onClick) {
+        container._onClick();
+      }
+    }
+
+    vfunc_clicked(button) {
+      this._removeMenuTimeout?.();
+      this.activate(button);
+      return Clutter.EVENT_STOP;
+    }
+
+    popupMenu(side = St.Side.TOP) {
+      this._removeMenuTimeout?.();
+      this.fake_release();
+      let container = this.get_parent();
+      if (container?._menu) {
+        container._menu.popup();
+        return container._menu;
+      }
+      return null;
+    }
+
+    getDragActor() {
+      return new Clutter.Actor();
+    }
+
+    getDragActorSource() {
+      return this;
     }
 
     _createIcon(size) {
@@ -212,35 +264,11 @@ export const DockIcon = GObject.registerClass(
         icon_name: this._default_icon_name || 'file',
         icon_size: size,
         style_class: this._default_icon_style_class || '',
-        track_hover: true,
+        reactive: false,
+        track_hover: false,
       });
-
-      let container = this.get_parent();
-
-      // attach event
-      let icon = this._iconActor;
-      icon.reactive = true;
-      icon.track_hover = true;
-
-      icon.connectObject(
-        'enter-event',
-        () => {
-          try {
-            container.showLabel();
-          } catch (err) {
-            console.log(err);
-          }
-        },
-        'leave-event',
-        () => {
-          try {
-            container.hideLabel();
-          } catch (err) {
-            console.log(err);
-          }
-        },
-        this
-      );
+      const gicon = this.app.get_app_info?.()?.get_icon() ?? this.app.get_icon?.();
+      if (gicon) this._iconActor.gicon = gicon;
 
       return this._iconActor;
     }
@@ -261,37 +289,16 @@ export const DockItemContainer = GObject.registerClass(
 
       this.custom_icon = true;
 
-      // hack to get DesktopAppInfo class
-      let DesktopAppInfo = Main.overview.d2dl.DesktopAppInfo;
-      if (!DesktopAppInfo) {
-        try {
-          DesktopAppInfo =
-            Shell.AppSystem.get_default().get_installed()[0].constructor;
-        } catch (err) {
-          // should be unreachable
-          console.log(err);
-        }
-        Main.overview.d2dl.DesktopAppInfo = DesktopAppInfo;
-      }
+      const DesktopAppInfo = Gio.DesktopAppInfo || GioUnix.DesktopAppInfo;
+      const desktopApp = params.appinfo_filename
+        ? DesktopAppInfo.new_from_filename(params.appinfo_filename)
+        : params.app?.get_app_info?.();
+      // AppIcon requires Shell.App (including its state property and window
+      // signals). Gio.DesktopAppInfo only describes the desktop file.
+      const app = params.app ?? (desktopApp ? new Shell.App({app_info: desktopApp}) : null);
+      if (!app) throw new Error(`Invalid desktop application: ${params.appinfo_filename}`);
 
-      let desktopApp = params.app;
-      if (desktopApp) {
-        // monkey patch dummy app
-        if (!desktopApp.get_icon) {
-          desktopApp.can_open_new_window = () => false;
-          desktopApp.create_icon_texture = () => null;
-          desktopApp.get_windows = () => null;
-          desktopApp.get_icon = () => {
-            return {
-              get_names: () => [],
-            };
-          };
-        }
-      } else {
-        desktopApp = DesktopAppInfo.new_from_filename(params.appinfo_filename);
-      }
-
-      let dashIcon = new DockIcon(desktopApp, {
+      let dashIcon = new DockIcon(app, {
         name: 'DockItemContainer',
         style_class: 'dash-item-container',
         ...(params || {}),
@@ -300,15 +307,14 @@ export const DockItemContainer = GObject.registerClass(
       this.setChild(dashIcon);
 
       try {
-        this.setLabelText(desktopApp.get_name());
-        dashIcon._default_icon_name = desktopApp.get_icon().get_names()[0];
+        this.setLabelText(app.get_name());
       } catch (err) {
         console.log(err);
         console.log(params);
       }
 
       // menu
-      if (params.appinfo_filename) {
+      if (desktopApp) {
         this._menu = new DockItemMenu(this, St.Side.TOP, {
           desktopApp,
         });
@@ -320,6 +326,17 @@ export const DockItemContainer = GObject.registerClass(
         this._menu.close();
         dashIcon._menu = this._menu;
       }
+
+      this.connect('destroy', () => {
+        if (this._menu) {
+          this._menuManager.removeMenu(this._menu);
+          dashIcon._menu = null;
+          this._menu.destroy();
+          this._menu = null;
+        }
+        this._menuManager = null;
+        this.dock = null;
+      });
     }
 
     activateNewWindow() {
@@ -358,22 +375,26 @@ export const DockBackground = GObject.registerClass(
 
       this._padding = 0;
 
-      if (!first || !last || first == last) {
+      if (!first || !last || !dock.dash) {
         this.opacity = 0;
         return;
       }
 
       let dp = dock.dash.get_transformed_position();
-      if (isNaN(dp[0]) || isNaN(dp[1])) return;
+      if (!dp.every(Number.isFinite)) return;
 
       let padding =
         iconSize * 0.1 * (dock.extension.dock_padding || 0) * scaleFactor;
 
       if (first && last) {
-        let tx = first._icon.translationX;
-        let ty = first._icon.translationY;
-        let tx2 = last._icon.translationX;
-        let ty2 = last._icon.translationY;
+        let tx = first._icon?.translation_x ?? 0;
+        let ty = first._icon?.translation_y ?? 0;
+        let tx2 = last._icon?.translation_x ?? 0;
+        let ty2 = last._icon?.translation_y ?? 0;
+        if (isNaN(tx)) tx = 0;
+        if (isNaN(ty)) ty = 0;
+        if (isNaN(tx2)) tx2 = 0;
+        if (isNaN(ty2)) ty2 = 0;
 
         // bottom
         this.x = dp[0];
@@ -395,36 +416,44 @@ export const DockBackground = GObject.registerClass(
         this.y -= padding;
         height += padding * 2;
 
-        if (!isNaN(width)) {
-          this.width = width;
+        if (Number.isFinite(width)) {
+          this.width = Math.max(0, width);
         }
-        if (!isNaN(height)) {
-          this.height = height;
+        if (Number.isFinite(height)) {
+          this.height = Math.max(0, height);
         }
 
-        this.x -= dock.x;
-        this.y -= dock.y;
+        if (!isNaN(this.x) && !isNaN(dock.x)) {
+          this.x -= dock.x;
+        }
+        if (!isNaN(this.y) && !isNaN(dock.y)) {
+          this.y -= dock.y;
+        }
         this._padding = padding;
 
         // adjust padding
         let az = -padding;
-        this.x += az / 2;
-        this.width -= az * (1 + !vertical);
-        this.y += az / 2;
-        this.height -= az * (1 + vertical);
+        if (!isNaN(az)) {
+          this.x += az / 2;
+          this.width -= az * (1 + !vertical);
+          this.y += az / 2;
+          this.height -= az * (1 + vertical);
+        }
 
         if (panel_mode) {
           if (vertical) {
-            this.y = dock.y;
+            this.y = 0;
             this.height = dock.height;
           } else {
-            this.x = dock.x;
+            this.x = 0;
             this.width = dock.width;
           }
         }
 
-        this.opacity = 255;
-        dock.dash.opacity = this.opacity;
+        const transparent = (Main.overview.visible || dock.extension._inOverview) &&
+          dock.extension.overview_transparent_background;
+        this.opacity = transparent ? 0 : 255;
+        dock.dash.opacity = 255;
       }
     }
   }

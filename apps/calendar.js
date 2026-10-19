@@ -21,7 +21,7 @@ export const Calendar = GObject.registerClass(
     }
 
     redraw() {
-      this._canvas.settings = this.settings;
+      this._canvas.settings = { ...this._canvas.settings, ...this.settings };
       this.visible = true;
       this._canvas.redraw();
     }
@@ -51,7 +51,15 @@ const CalendarCanvas = GObject.registerClass(
     }
 
     vfunc_repaint() {
-      let ctx = this.get_context();
+      const ctx = this.get_context();
+      try {
+        this._paint(ctx);
+      } finally {
+        ctx.$dispose();
+      }
+    }
+
+    _paint(ctx) {
       let [width, height] = this.get_surface_size();
 
       let size = width;
@@ -92,8 +100,6 @@ const CalendarCanvas = GObject.registerClass(
       Drawing.set_color(ctx, day_color, 1.0);
       ctx.moveTo(0, -24);
       Drawing.draw_text(ctx, `${dayNames[d0.getDay()]}`, 'DejaVuSans 20');
-
-      ctx.$dispose();
     }
   }
 );

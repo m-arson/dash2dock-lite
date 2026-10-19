@@ -10,28 +10,32 @@ export const Timer = class {
   }
 
   initialize(resolution) {
-    this._resolution = resolution || 1000;
+    this._resolution = Math.max(1, resolution || 1000);
+    this._enabled = true;
+    this._paused = false;
     this._autoStart = true;
     this._autoHibernate = true;
 
     this._hibernating = false;
-    this._hibernatCounter = 0;
-    this._hibernateWait = 250 + this._resolution * 2;
   }
 
   shutdown() {
+    this._enabled = false;
     this._autoStart = false;
     this._hibernating = false;
     this.stop();
+    this._subscribers = [];
   }
 
   start(resolution) {
+    if (!this._enabled) return;
     if (this.is_running()) {
       // print('already running');
       return;
     }
-    this._resolution = resolution || 1000;
+    this._resolution = Math.max(1, resolution || this._resolution || 1000);
     this._time = 0;
+    this._paused = false;
     this._timeoutId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       this._resolution,
@@ -46,8 +50,9 @@ export const Timer = class {
       // print('already stopped');
       return;
     }
-    GLib.source_remove(this._timeoutId);
+    const timeoutId = this._timeoutId;
     this._timeoutId = null;
+    GLib.source_remove(timeoutId);
     this.onStop();
   }
 
@@ -79,7 +84,6 @@ export const Timer = class {
 
     this.stop();
     this._hibernating = true;
-    this._hibernatCounter = 0;
   }
 
   is_running() {
@@ -98,65 +102,56 @@ export const Timer = class {
   }
 
   onStart() {
-    // print(`started ${this._name} [${this.subscriberNames().join(',')}]`);
-    this._subscribers.forEach((s) => {
-      if (s.onStart) {
-        s.onStart(s);
-      }
-    });
+    this._dispatch('onStart');
   }
 
   onStop() {
-    this._subscribers.forEach((s) => {
-      if (s.onStop) {
-        s.onStop(s);
-      }
-    });
-    // print(`stopped ${this._name}`);
+    this._dispatch('onStop');
   }
 
   onPause() {
-    this._subscribers.forEach((s) => {
-      if (s.onPause) {
-        s.onPause(s);
-      }
-    });
+    this._dispatch('onPause');
   }
 
   onResume() {
-    this._subscribers.forEach((s) => {
-      if (s.onResume) {
-        s.onResume(s);
+    this._dispatch('onResume');
+  }
+
+  _dispatch(method, ...args) {
+    const timeoutId = this._timeoutId;
+    // Callbacks can cancel each other, add work, or disable the extension.
+    // New subscriptions belong to the next tick, and cancelled ones must not run.
+    for (const subscriber of [...this._subscribers]) {
+      if (method === 'onUpdate' && this._timeoutId !== timeoutId) break;
+      if (!this._subscribers.includes(subscriber)) continue;
+      try {
+        subscriber[method]?.(subscriber, ...args);
+      } catch (error) {
+        this.unsubscribe(subscriber);
+        // Letting an exception escape removes the GLib source while leaving
+        // is_running() true, permanently stalling every animation on the timer.
+        console.error(`${this._name}: ${subscriber._name ?? subscriber._id}: ${error.message ?? error}\n${error.stack ?? ''}`);
       }
-    });
+    }
   }
 
   onUpdate() {
-    if (!this._timeoutId || this._paused) {
-      return true;
-    }
-
-    this._subscribers.forEach((s) => {
-      if (s.onUpdate) {
-        s.onUpdate(s, this._resolution);
-      }
-    });
+    if (!this._timeoutId) return GLib.SOURCE_REMOVE;
+    if (this._paused) return GLib.SOURCE_CONTINUE;
+    const timeoutId = this._timeoutId;
+    this._dispatch('onUpdate', this._resolution);
+    if (this._timeoutId !== timeoutId) return GLib.SOURCE_REMOVE;
 
     this._time += this._resolution;
 
     if (this._autoHibernate) {
       if (!this._subscribers.length) {
-        this._hibernatCounter += this._resolution;
-        if (this._hibernatCounter >= this._hibernateWait) {
-          this.hibernate();
-        }
-      } else {
-        this._hibernatCounter = 0;
+        this.hibernate();
       }
     }
 
     // print(`${this._time/1000} subs:${this._subscribers.length}`);
-    return true;
+    return this._timeoutId === timeoutId ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
   }
 
   runningTime() {
@@ -164,6 +159,7 @@ export const Timer = class {
   }
 
   subscribe(obj) {
+    if (!this._enabled || !obj) return obj;
     if (!obj._id) {
       obj._id = this._subscriberId++;
     }
@@ -171,10 +167,7 @@ export const Timer = class {
     if (idx == -1) {
       this._subscribers.push(obj);
     } else {
-      this._subscribers[idx] = {
-        ...this._subscribers[idx],
-        ...obj,
-      };
+      Object.assign(this._subscribers[idx], obj);
       obj = this._subscribers[idx];
     }
 
@@ -190,16 +183,15 @@ export const Timer = class {
   }
 
   unsubscribe(obj) {
+    if (!obj) return;
     let idx = this._subscribers.findIndex((s) => s._id == obj._id);
     if (idx != -1) {
       if (this._subscribers.length == 1) {
         this._subscribers = [];
       } else {
-        this._subscribers = [
-          ...this._subscribers.slice(0, idx),
-          ...this._subscribers.slice(idx + 1),
-        ];
+        this._subscribers.splice(idx, 1);
       }
+      if (!this._subscribers.length && this._autoHibernate) this.hibernate();
     }
   }
 
@@ -285,8 +277,8 @@ export const Timer = class {
       onUpdate: (s, dt) => {
         s._time += dt;
         if (s._time >= s._delay) {
-          s._func(s);
           this.unsubscribe(s);
+          s._func(s);
         }
       },
     };
@@ -307,8 +299,8 @@ export const Timer = class {
       onUpdate: (s, dt) => {
         s._time += dt;
         if (s._time >= s._delay) {
-          s._func(s);
           this.unsubscribe(s);
+          s._func(s);
         }
       },
     };
@@ -316,7 +308,7 @@ export const Timer = class {
   }
 
   runSequence(array, settings) {
-    if (typeof array === 'object' && !array.length) {
+    if (array && !Array.isArray(array)) {
       array._time = 0;
       array._currentIdx = 0;
       return this.subscribe(array);
@@ -335,10 +327,12 @@ export const Timer = class {
         s._time += dt;
         if (s._time >= current.delay) {
           current.func(current);
-          s._time = -current.delay;
+          s._time -= current.delay;
           s._currentIdx++;
           if (s._currentIdx >= s._sequences.length && s._loop) {
             s._currentIdx = 0;
+          } else if (s._currentIdx >= s._sequences.length) {
+            this.unsubscribe(s);
           }
         }
       },
@@ -347,32 +341,34 @@ export const Timer = class {
   }
 
   runAnimation(array, settings) {
-    if (typeof func === 'object' && !array.length) {
-      func._time = 0;
-      return this.subscribe(func);
+    if (array && !Array.isArray(array)) {
+      array._time = 0;
+      return this.subscribe(array);
     }
 
     let duration = 0;
-    array.forEach((f) => {
-      if (!f._start) {
-        f._start = duration;
-      }
-      duration += f._duration;
+    const animationFrames = array.map((frame) => {
+      const result = { ...frame, _start: frame._start ?? duration };
+      duration = Math.max(duration, result._start + result._duration);
+      return result;
     });
 
     let obj = {
       _time: 0,
       _duration: duration,
       _loop: false,
-      _frames: [...array],
+      _frames: animationFrames,
       ...(settings || {}),
       onUpdate: (s, dt) => {
-        s._time += dt;
+        const previousTime = s._time;
+        s._time = Math.min(s._time + dt, s._duration);
 
         let frames = [];
         if (s._frames) {
           frames = s._frames.filter((f) => {
-            return f._start <= s._time && s._time < f._start + f._duration;
+            // Also finish frames crossed by a slow tick. Short cleanup frames
+            // otherwise never run and can leave an icon stuck mid-bounce.
+            return f._start <= s._time && previousTime < f._start + f._duration;
           });
         }
         s._currentFrames = frames;
@@ -380,15 +376,14 @@ export const Timer = class {
         if (!s._func) {
           s._func = (s) => {
             s._currentFrames.forEach((f) => {
-              f._time = s._time - f._start;
+              f._time = Math.min(s._time - f._start, f._duration);
               f._func(f, s);
             });
           };
         }
 
-        if (s._time > s._duration) {
+        if (s._time >= s._duration) {
           this.unsubscribe(s);
-          s._time = s._duration;
           s._func(s);
           return;
         }

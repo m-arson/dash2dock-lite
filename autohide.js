@@ -32,6 +32,7 @@ export let AutoHide = class {
     this._enabled = true;
     this._shown = true;
     this._dwell = 0;
+    this.last_pointer = null;
     // windows may already cover the dock; nothing else checks until the
     // focus or stacking changes
     this._debounceCheckHide();
@@ -42,30 +43,38 @@ export let AutoHide = class {
     if (!this._enabled) return;
     if (this.extension._hiTimer) {
       this.extension._hiTimer.cancel(this._animationSeq);
+      this._animationSeq = null;
+    }
+    if (this.extension._loTimer && this._debounceCheckSeq) {
+      this.extension._loTimer.cancel(this._debounceCheckSeq);
+      this._debounceCheckSeq = null;
     }
 
+    this._enabled = false;
     this.show();
 
-    this._enabled = false;
-
-    let actors = global.get_window_actors();
-    let windows = actors.map((a) => a.get_meta_window());
-    windows.forEach((w) => {
-      if (w._tracked) {
-        this._untrack(w);
+    if (this._trackedWindows) {
+      for (let w of this._trackedWindows) {
+        try {
+          w.disconnectObject(this);
+        } catch (err) {}
       }
-    });
+      this._trackedWindows.clear();
+    }
+    this.windows = null;
+    this.last_pointer = null;
 
     console.log('autohide disabled');
   }
 
   _getScaleFactor() {
     //! use dock scale factor
-    let scaleFactor = this.dock._monitor.geometry_scale;
+    let scaleFactor = this.dock._monitor?.geometry_scale || 1;
     return scaleFactor;
   }
 
   _onMotionEvent() {
+    if (!this._enabled || !this.dock._monitor) return;
     if (this.extension.pressure_sense && !this._shown) {
       let monitor = this.dock._monitor;
       let pointer = global.get_pointer();
@@ -75,6 +84,12 @@ export let AutoHide = class {
 
       let sw = monitor.width;
       let sh = monitor.height;
+      if (pointer[0] < monitor.x || pointer[0] >= monitor.x + sw ||
+          pointer[1] < monitor.y || pointer[1] >= monitor.y + sh) {
+        this._dwell = 0;
+        this.last_pointer = null;
+        return;
+      }
       let scale = this._getScaleFactor();
       let area = scale * (PRESSURE_SENSE_DISTANCE * PRESSURE_SENSE_DISTANCE);
       let dx = 0;
@@ -133,13 +148,13 @@ export let AutoHide = class {
   }
 
   _onEnterEvent() {
-    if (!this.extension.pressure_sense) {
+    if (this._enabled && !this.extension.pressure_sense) {
       this.show();
     }
   }
 
   _onLeaveEvent() {
-    if (this._shown) {
+    if (this._enabled && this._shown) {
       this._dwell = 0;
       this._debounceCheckHide();
     }
@@ -154,7 +169,8 @@ export let AutoHide = class {
   }
 
   show() {
-    if (!this.dock._monitor || this.dock._monitor.inFullscreen) {
+    if (this.dock._destroyed || !this.dock._monitor ||
+        (this._enabled && this.dock._monitor.inFullscreen && !this.extension._inOverview)) {
       return;
     }
     this._dwell = 0;
@@ -164,6 +180,7 @@ export let AutoHide = class {
   }
 
   hide() {
+    if (!this._enabled || this.dock._destroyed) return;
     this._dwell = 0;
     this.frameDelay = 10;
     this._shown = false;
@@ -171,41 +188,48 @@ export let AutoHide = class {
   }
 
   _track(window) {
-    //! window tracking should be made global
-    if (!window._tracked) {
+    if (!this._trackedWindows) {
+      this._trackedWindows = new Set();
+    }
+    if (!this._trackedWindows.has(window)) {
       window.connectObject(
         'position-changed',
-        // this._debounceCheckHide.bind(this),
         () => {
-          this.dock.extension.checkHide();
+          this._debounceCheckHide();
         },
         'size-changed',
-        // this._debounceCheckHide.bind(this),
         () => {
-          this.dock.extension.checkHide();
+          this._debounceCheckHide();
+        },
+        'unmanaged',
+        () => {
+          this._untrack(window);
         },
         this
       );
-      window._tracked = true;
+      this._trackedWindows.add(window);
     }
   }
 
   _untrack(window) {
+    if (!this._trackedWindows?.delete(window)) return;
     try {
-      if (window && window._tracked) {
-        window.disconnectObject(this);
-        window._tracked = false;
-      }
+      window.disconnectObject(this);
     } catch (err) {
       // may have been destroyed already
     }
   }
 
   _checkOverlap() {
+    if (!this.dock._monitor || this.dock._destroyed) return false;
     // console.log("checking overlap...");
     if (this.extension._inOverview) {
       return false;
     }
+    if (!this.extension.autohide_dash) return false;
+    // Fullscreen takes priority over pointer proximity: show() deliberately
+    // refuses to reveal a dock over a fullscreen application.
+    if (this.dock._monitor.inFullscreen) return true;
     let pointer = global.get_pointer();
     if (this.extension.simulated_pointer) {
       pointer = [...this.extension.simulated_pointer];
@@ -225,10 +249,6 @@ export let AutoHide = class {
 
     // console.log(arect);
 
-    if (!this.extension.autohide_dash) {
-      return false;
-    }
-
     // console.log("checking pointer location...");
 
     if (this.dock._isWithinDash(pointer) || isInRect(arect, pointer)) {
@@ -239,68 +259,53 @@ export let AutoHide = class {
       return true;
     }
 
-    // console.log("checking fullscreen...");
-
-    if (this.dock._monitor && this.dock._monitor.inFullscreen) {
-      return true;
-    }
-
     // console.log("checking windows...");
 
     let monitor = this.dock._monitor;
     let actors = global.get_window_actors();
-    let windows = actors.map((a) => {
-      let w = a.get_meta_window();
-      w._parent = a;
-      return w;
-    });
-    windows = windows.filter((w) => w.can_close());
-    windows = windows.filter((w) => w.get_monitor() == monitor.index);
-    // windows = windows.filter((w) => !w.is_override_redirect());
+    // Track all managed windows, including those currently minimized, on a
+    // different workspace, or on another monitor: any can later cover the dock.
+    const currentWindows = new Set();
     let workspace = global.workspace_manager.get_active_workspace_index();
-    windows = windows.filter(
-      (w) =>
-        workspace == w.get_workspace().index() && w.showing_on_its_workspace()
-    );
-    windows = windows.filter((w) =>
-      handledWindowTypes.includes(w.get_window_type())
-    );
-
     let isOverlapped = false;
-    let dockRect = this.dock.struts.get_transformed_position();
-    dockRect.push(this.dock.struts.width);
-    dockRect.push(this.dock.struts.height);
-
-    windows.forEach((w) => {
+    for (const actor of actors) {
+      const w = actor.get_meta_window();
+      if (!w) continue;
+      currentWindows.add(w);
       this._track(w);
-      if (isOverlapped) return;
+      // Once overlap is known, only synchronize window ownership. Avoid
+      // repeated native geometry/workspace queries for the remaining windows.
+      if (isOverlapped || !w.can_close() || w.get_monitor() !== monitor.index ||
+          w.get_workspace()?.index() !== workspace || !w.showing_on_its_workspace() ||
+          !handledWindowTypes.includes(w.get_window_type())) continue;
 
       let frame = w.get_frame_rect();
       let win = [frame.x, frame.y, frame.width, frame.height];
 
-      if (isOverlapRect(dockRect, win)) {
+      if (isOverlapRect(arect, win)) {
         isOverlapped = true;
       }
-    });
-
-    this.windows = windows;
+    }
+    for (const window of this._trackedWindows ?? []) {
+      if (!currentWindows.has(window)) this._untrack(window);
+    }
 
     // console.log(isOverlapped);
     return isOverlapped;
   }
 
   _debounceCheckHide() {
+    if (!this._enabled || this.dock._destroyed) return;
     if (this.extension._loTimer) {
       if (!this._debounceCheckSeq) {
         this._debounceCheckSeq = this.extension._loTimer.runDebounced(
           () => {
+            this._debounceCheckSeq = null;
             this._checkHide();
           },
           DEBOUNCE_HIDE_TIMEOUT,
           'debounceCheckHide'
         );
-      } else {
-        this.extension._loTimer.runDebounced(this._debounceCheckSeq);
       }
     }
   }

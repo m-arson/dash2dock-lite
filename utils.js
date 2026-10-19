@@ -45,6 +45,7 @@ export const warpPointer = (pointer, x, y, extension) => {
 export const setTimeout = (func, delay, ...args) => {
   const wrappedFunc = () => {
     func.apply(this, args);
+    return GLib.SOURCE_REMOVE;
   };
   return GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, wrappedFunc);
 };
@@ -90,7 +91,7 @@ export const isOverlapRect = (r1, r2) => {
   return false;
 };
 
-export const isInRect = (r, p, pad) => {
+export const isInRect = (r, p, pad = 0) => {
   let [x1, y1, w, h] = r;
   let x2 = x1 + w;
   let y2 = y1 + h;
@@ -121,23 +122,21 @@ export const trySpawnCommandLine = function (cmd) {
   });
 };
 
-export const loadFile = function (fn) {
+export const loadFile = function (fn, cancellable = null) {
   return new Promise((resolve, reject) => {
     if (typeof fn == 'string') {
       fn = Gio.File.new_for_path(fn);
     }
-    if (fn.query_exists(null)) {
-      fn.load_contents_async(null, (f, res) => {
-        let [ok, contents] = f.load_contents_finish(res);
+    fn.load_contents_async(cancellable, (f, res) => {
+      try {
+        const [ok, contents] = f.load_contents_finish(res);
         if (!ok) {
-          reject('unable to load file');
+          throw new Error('Unable to load file');
         }
-        const decoder = new TextDecoder();
-        let contentsString = decoder.decode(contents);
-        resolve(contentsString);
-      });
-    } else {
-      reject('file not found');
-    }
+        resolve(new TextDecoder().decode(contents));
+      } catch (err) {
+        reject(err);
+      }
+    });
   });
 };

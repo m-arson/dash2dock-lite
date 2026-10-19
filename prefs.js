@@ -4,7 +4,6 @@
 import Gdk from 'gi://Gdk';
 import Gtk from 'gi://Gtk';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import Adw from 'gi://Adw';
 
 const GETTEXT_DOMAIN = 'dash2dock-light';
@@ -110,6 +109,7 @@ export default class Preferences extends ExtensionPreferences {
 
   async selectFolder(window, builder, settings, target) {
     const onFolder = (folder) => {
+      if (this.window !== window) return;
       if (folder instanceof Gio.File) {
         let path = folder.get_path();
         console.log(`${target} = ${path}`);
@@ -122,6 +122,10 @@ export default class Preferences extends ExtensionPreferences {
 
     // Gtk.FileDialog needs GTK 4.10; Gnome 42 and 43 ship older GTK
     if (!Gtk.FileDialog) {
+      if (this._folderChooser) {
+        this._folderChooser.show();
+        return null;
+      }
       // GTK does not keep native dialogs alive; hold it until it responds
       const chooser = new Gtk.FileChooserNative({
         action: Gtk.FileChooserAction.SELECT_FOLDER,
@@ -130,24 +134,35 @@ export default class Preferences extends ExtensionPreferences {
       });
       this._folderChooser = chooser;
       chooser.connect('response', (chooser, response) => {
-        if (response == Gtk.ResponseType.ACCEPT) {
-          onFolder(chooser.get_file());
-        }
-        chooser.destroy();
+        if (this._folderChooser !== chooser) return;
         this._folderChooser = null;
+        try {
+          if (response == Gtk.ResponseType.ACCEPT) {
+            onFolder(chooser.get_file());
+          }
+        } finally {
+          chooser.destroy();
+        }
       });
       chooser.show();
       return null;
     }
 
-    const dialog = new Gtk.FileDialog();
-    dialog.select_folder(window, null, (dialog, task) => {
+    if (this._folderDialog) return null;
+    const request = {
+      dialog: new Gtk.FileDialog(),
+      cancellable: new Gio.Cancellable(),
+    };
+    this._folderDialog = request;
+    request.dialog.select_folder(window, request.cancellable, (dialog, task) => {
       let folder = null;
       try {
         folder = dialog.select_folder_finish(task);
       } catch (err) {
         // dismissed: keep the current folder
       }
+      if (this._folderDialog !== request) return;
+      this._folderDialog = null;
       onFolder(folder);
     });
     return null;
@@ -218,8 +233,9 @@ export default class Preferences extends ExtensionPreferences {
     settings.set_string('msg-to-ext', '');
 
     let settingsKeys = SettingsKeys();
-    settingsKeys.connectBuilder(builder);
     settingsKeys.connectSettings(settings);
+    settingsKeys.connectBuilder(builder);
+    this._settingsKeys = settingsKeys;
 
     this._settings = settings;
 
@@ -241,14 +257,18 @@ export default class Preferences extends ExtensionPreferences {
       }
     };
 
-    settings.connect('changed::experimental-features', () => {
-      toggle_experimental();
-    });
+    const experimentalId = settings.connect(
+      'changed::experimental-features',
+      toggle_experimental
+    );
 
     toggle_experimental();
 
-    this._monitorsConfig = new MonitorsConfig();
-    this._monitorsConfig.connect('updated', () => this.updateMonitors());
+    const monitorsConfig = new MonitorsConfig();
+    this._monitorsConfig = monitorsConfig;
+    const monitorUpdatedId = monitorsConfig.connect('updated', () =>
+      this.updateMonitors()
+    );
     // settings.connect('changed::preferred-monitor', () => this.updateMonitors());
 
     this._themed_presets = [];
@@ -256,6 +276,28 @@ export default class Preferences extends ExtensionPreferences {
     this.preloadPresets(configFile('themes').get_path());
     this._buildThemesMenu(window);
     this.updateMonitors();
+
+    let closed = false;
+    window.connect('close-request', () => {
+      if (closed) return false;
+      closed = true;
+      monitorsConfig.disconnect(monitorUpdatedId);
+      monitorsConfig.destroy();
+      this._monitorsConfig = null;
+      const chooser = this._folderChooser;
+      this._folderChooser = null;
+      chooser?.destroy();
+      const dialog = this._folderDialog;
+      this._folderDialog = null;
+      dialog?.cancellable.cancel();
+      settings.disconnect(experimentalId);
+      settingsKeys.destroy();
+      this._settingsKeys = null;
+      this._builder = null;
+      this._settings = null;
+      this.window = null;
+      return false;
+    });
 
     this.window = window;
   }
@@ -265,28 +307,47 @@ export default class Preferences extends ExtensionPreferences {
     if (!dir.query_exists(null)) {
       return;
     }
-    let iter = dir.enumerate_children(
-      'standard::*',
-      Gio.FileQueryInfoFlags.NONE,
-      null
-    );
+    let iter = null;
+    try {
+      iter = dir.enumerate_children(
+        'standard::*',
+        Gio.FileQueryInfoFlags.NONE,
+        null
+      );
 
-    let themed_presets = [];
-    let f = iter.next_file(null);
-    while (f) {
-      let fn = Gio.File.new_for_path(`${themes_path}/${f.get_name()}`);
-      if (fn.query_exists(null)) {
-        const [success, contents] = fn.load_contents(null);
-        const decoder = new TextDecoder();
-        let contentsString = decoder.decode(contents);
-        let json = JSON.parse(contentsString);
-        if (json && json['meta'] && json['meta']['title']) {
-          themed_presets.push(json);
+      let themed_presets = [];
+      let f;
+      while ((f = iter.next_file(null))) {
+        if (
+          f.get_file_type() !== Gio.FileType.REGULAR ||
+          !f.get_name().endsWith('.json')
+        ) {
+          continue;
+        }
+        let fn = Gio.File.new_for_path(`${themes_path}/${f.get_name()}`);
+        try {
+          const [success, contents] = fn.load_contents(null);
+          if (!success) continue;
+          const decoder = new TextDecoder();
+          let contentsString = decoder.decode(contents);
+          let json = JSON.parse(contentsString);
+          if (json && json['meta'] && json['meta']['title']) {
+            themed_presets.push(json);
+          }
+        } catch (err) {
+          console.log(`Unable to load theme ${f.get_name()}: ${err}`);
         }
       }
-      f = iter.next_file(null);
+      this._themed_presets = [...this._themed_presets, ...themed_presets];
+    } catch (err) {
+      console.log(err);
+    } finally {
+      if (iter) {
+        try {
+          iter.close(null);
+        } catch (e) {}
+      }
     }
-    this._themed_presets = [...this._themed_presets, ...themed_presets];
   }
 
   _buildThemesMenu(window) {
@@ -314,8 +375,7 @@ export default class Preferences extends ExtensionPreferences {
   }
 
   loadPreset(i) {
-    let settingsKeys = SettingsKeys();
-    settingsKeys.connectSettings(this._settings);
+    let settingsKeys = this._settingsKeys;
     if (i == this._themed_presets.length - 1) {
       // export
       let keys = settingsKeys.keys();
@@ -350,30 +410,22 @@ export default class Preferences extends ExtensionPreferences {
     }
 
     let p = this._themed_presets[i];
-    if (!p['meta'] || !p['meta']['title']) {
+    if (!p?.meta?.title) {
       return;
     }
 
     Object.keys(p).forEach((k) => {
       let v = p[k];
       let def = settingsKeys.getKey(k);
-      if (!def) return;
-      switch (def.widget_type) {
-        case 'color':
-          this._settings.set_value(k, new GLib.Variant('(dddd)', v));
-          break;
-        case 'switch':
-          this._settings.set_boolean(k, v);
-          break;
-        case 'dropdown':
-          this._settings.set_int(k, v);
-          break;
+      if (!def?.themed) return;
+      try {
+        if (!settingsKeys.setValue(k, v)) {
+          console.log(`Unable to apply theme setting ${k}: GSettings rejected the value`);
+        }
+      } catch (err) {
+        console.log(`Unable to apply theme setting ${k}: ${err}`);
       }
     });
-
-    // settingsKeys.connectBuilder(this._builder);
-    settingsKeys._builder = this._builder;
-    settingsKeys.connectSettings(this._settings);
 
     this.window.add_toast(new Adw.Toast({ title: `${p['meta']['title']}` }));
   }
@@ -381,6 +433,7 @@ export default class Preferences extends ExtensionPreferences {
   updateMonitors() {
     // the extension reads n as Main.layoutManager.monitors[n], with 0 meaning
     // the primary monitor and the primary's own index meaning monitor 0
+    if (!this._monitorsConfig || !this._builder) return;
     let monitors = this._monitorsConfig.logicalMonitors;
     let primary = monitors.findIndex((m) => m.isPrimary);
     let list = new Gtk.StringList();
@@ -394,6 +447,13 @@ export default class Preferences extends ExtensionPreferences {
           : m.displayName
       );
     }
-    this._builder.get_object('preferred-monitor').set_model(list);
+    let combo = this._builder.get_object('preferred-monitor');
+    let savedPref = this._settings.get_int('preferred-monitor');
+    this._settingsKeys.updateWidget('preferred-monitor', () => {
+      combo.set_model(list);
+      combo.set_selected(
+        savedPref >= 0 && savedPref < list.get_n_items() ? savedPref : 0
+      );
+    });
   }
 }

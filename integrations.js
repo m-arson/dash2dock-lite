@@ -14,40 +14,53 @@ export const Integrations = class {
   }
 
   hookCompiz(hook = true) {
-    let compiz = Main.extensionManager.lookup(
+    const compiz = Main.extensionManager.lookup(
       'compiz-alike-magic-lamp-effect@hermes83.github.com'
     );
-    if (compiz && compiz.stateObj) {
-      let stateObj = compiz.stateObj;
-      this._compiz = stateObj;
-      if (stateObj._getIcon && !hook) {
-        stateObj.getIcon = stateObj._getIcon;
-        stateObj._getIcon = null;
-      }
-      if (!stateObj._getIcon && hook) {
-        stateObj._getIcon = stateObj.getIcon;
-        if (this.extension.lamp_app_animation) {
-          stateObj.getIcon = this.compiz_getIcon.bind(this);
-        }
-      }
+    const target = compiz?.stateObj;
+    if (this._compizHook && this._compizHook.target === target && hook && this.extension.lamp_app_animation &&
+        target.getIcon === this._compizHook.wrapper) return;
+    this.releaseCompiz();
+    this._compiz = target ?? null;
+    if (target && hook && this.extension.lamp_app_animation && typeof target.getIcon === 'function') {
+      const original = target.getIcon;
+      // Another extension can retain this wrapper in its own chain. Release
+      // our owner on disable so that chain cannot keep this extension alive.
+      const state = { owner: this, original };
+      const wrapper = function (...args) {
+        if (state.owner) return state.owner.compiz_getIcon(...args);
+        return state.original.apply(this, args);
+      };
+      this._compizHook = { target, original, wrapper, state };
+      target.getIcon = wrapper;
     }
   }
 
   releaseCompiz() {
-    this.hookCompiz(false);
+    const hook = this._compizHook;
+    this._compizHook = null;
     this._compiz = null;
+    if (hook) hook.state.owner = null;
+    try {
+      if (hook && hook.target.getIcon === hook.wrapper) hook.target.getIcon = hook.original;
+    } catch (error) {
+      console.warn(`Unable to restore Compiz integration: ${error.message}`);
+    }
   }
 
   // override compiz getIcon
   compiz_getIcon(actor) {
-    let [success, icon] = actor.meta_window.get_icon_geometry();
+    const metaWindow = actor?.meta_window ?? actor?.get_meta_window?.();
+    if (!metaWindow) return { x: 0, y: 0, width: 0, height: 0 };
+    let [success, icon] = metaWindow.get_icon_geometry();
     if (success) {
       return icon;
     }
 
-    let docks = this.extension.docks;
+    let docks = this.extension.docks ?? [];
 
-    let monitor = Main.layoutManager.monitors[actor.meta_window.get_monitor()];
+    let monitor = Main.layoutManager.monitors[metaWindow.get_monitor()] ?? Main.layoutManager.primaryMonitor;
+    if (!monitor) return { x: 0, y: 0, width: 0, height: 0 };
     let dock = docks.find((d) => d._monitorIndex == monitor.index);
 
     if (!dock) {
@@ -59,46 +72,37 @@ export const Integrations = class {
     let sz = dock._preferredIconSize();
     let ofs = 0;
     if (sz) {
-      let scale = dock.getMonitor().geometry_scale || 1;
+      let scale = dock.getMonitor()?.geometry_scale || 1;
       ofs = (sz / 2) * scale;
     }
 
     let pids = null;
-    let pid = actor.get_meta_window()
-      ? actor.get_meta_window().get_pid()
-      : null;
-    if (pid) {
-      dock.dash._box
-        .get_children()
-        .filter(
-          (dashElement) =>
-            dashElement.child &&
-            dashElement.child._delegate &&
-            dashElement.child._delegate.app
-        )
-        .forEach((dashElement) => {
-          pids = dashElement.child._delegate.app.get_pids();
-          if (pids && pids.indexOf(pid) >= 0) {
-            let renderer = dashElement;
-            if (dashElement._renderer) {
-              dashElement = dashElement._renderer;
-            }
-            let transformed_position = dashElement.get_transformed_position();
-            if (
-              transformed_position &&
-              transformed_position[0] &&
-              transformed_position[1]
-            ) {
-              dashIcon = {
-                x: transformed_position[0],
-                y: transformed_position[1],
-                width: 0,
-                height: 0,
-              };
-              return;
-            }
+    let pid = metaWindow.get_pid();
+    if (pid && dock.dash?._box) {
+      for (let dashElement of dock.dash._box.get_children()) {
+        const app = dashElement.child?._delegate?.app;
+        if (!app) continue;
+        pids = app.get_pids();
+        if (pids && pids.indexOf(pid) >= 0) {
+          if (dashElement._renderer) {
+            dashElement = dashElement._renderer;
           }
-        });
+          let transformed_position = dashElement.get_transformed_position();
+          if (
+            transformed_position &&
+            Number.isFinite(transformed_position[0]) &&
+            Number.isFinite(transformed_position[1])
+          ) {
+            dashIcon = {
+              x: transformed_position[0],
+              y: transformed_position[1],
+              width: 0,
+              height: 0,
+            };
+            break;
+          }
+        }
+      }
     }
 
     if (!dashIcon) {
@@ -143,37 +147,58 @@ export const Integrations = class {
 
   hookBms(hook = true) {
     if (!hook) {
-      this.extension.docks.forEach((dock) => {
-        dock.animator._bms = null;
-      });
+      this.releaseBms();
+      return;
     }
-
     let bms = Main.extensionManager.lookup('blur-my-shell@aunetx');
+    const target = bms?.stateObj?._dash_to_dock_blur;
+    if (this._bmsHook?.target === target && target && this.extension.blur_background &&
+        target.update_size === this._bmsHook.wrapper) return;
+    this._restoreBmsHook();
+
     this._bms = bms;
-    if (bms && bms.stateObj && bms.metadata.version >= 70) {
+    if (bms && bms.stateObj && bms.metadata?.version >= 70) {
       let obj = bms.stateObj;
       if (obj._dash_to_dock_blur) {
-        if (!obj._dash_to_dock_blur.update_size_orig) {
-          obj._dash_to_dock_blur.update_size_orig =
-            obj._dash_to_dock_blur.update_size;
-        }
         if (hook && this.extension.blur_background) {
-          obj._dash_to_dock_blur.update_size = () => {};
-        } else if (obj._dash_to_dock_blur.update_size_orig) {
-          obj._dash_to_dock_blur.update_size =
-            obj._dash_to_dock_blur.update_size_orig;
+          const target = obj._dash_to_dock_blur;
+          const original = target.update_size;
+          const wrapper = () => {};
+          this._bmsHook = { target, original, wrapper };
+          target.update_size = wrapper;
         }
       }
     }
   }
 
   releaseBms() {
-    this.hookBms(false);
+    this._restoreBmsHook();
+    (this.extension.docks ?? []).forEach((dock) => {
+      if (dock.animator) {
+        dock.animator._bms = null;
+        dock.animator._blur_effects = null;
+        dock.animator._bmsLayout = null;
+      }
+    });
     this._bms = null;
+  }
+
+  _restoreBmsHook() {
+    const hook = this._bmsHook;
+    this._bmsHook = null;
+    try {
+      if (hook && hook.target.update_size === hook.wrapper) hook.target.update_size = hook.original;
+    } catch (error) {
+      console.warn(`Unable to restore Blur My Shell integration: ${error.message}`);
+    }
   }
 
   bms_update_size(animator) {
     let dock = animator.dock;
+    if (!dock || dock._destroyed) return;
+    // This runs with each animation frame. Most installations do not have
+    // Blur My Shell, so avoid enumerating every dock child in that case.
+    if (!this._bms) return;
 
     // blur my shell
     let bms = dock.get_children().find((child) => {
@@ -184,81 +209,71 @@ export const Integrations = class {
     animator._bms = bms;
 
     if (!bms) {
+      animator._bmsLayout = null;
+      animator._blur_effects = null;
       return;
     }
 
-    bms.visible = dock.extension.blur_background;
+    if (bms.visible !== dock.extension.blur_background) {
+      bms.visible = dock.extension.blur_background;
+    }
     if (!bms.visible) {
+      animator._bmsLayout = null;
       return;
     }
 
     // compatible blur-my-shell version 70
     // bms version 70 supports 46,47..up
     if (
-      dock.extension.integrations._bms &&
-      dock.extension.integrations._bms.metadata.version >= 70
+      dock.extension.integrations?._bms?.metadata?.version >= 70
     ) {
-      let bg_offset_x = dock._background.x;
-      let bg_offset_y = dock._background.y;
+      const bg_offset_x = dock._background.x;
+      const bg_offset_y = dock._background.y;
       let rw = dock.renderArea.width;
       let rh = dock.renderArea.height;
 
-      let meta_background = bms.first_child.first_child;
+      let meta_background = bms.first_child?.first_child;
       if (!meta_background) {
         // this should exists
         return;
       }
 
-      // bottom layout
+      const container = bms.first_child;
+      let x = 0;
+      let y = 0;
       switch (dock._position) {
         case 'left':
         case 'top':
-          bms.x = 0;
-          bms.y = 0;
-          bms.first_child.x = 0;
-          bms.first_child.y = 0;
-          bms.first_child.set_clip(
-            bg_offset_x,
-            bg_offset_y,
-            dock._background.width - (dock.extension.border_thickness && 0),
-            dock._background.height - (dock.extension.border_thickness && 0)
-          );
           break;
         case 'right':
-          bms.x = 0;
-          bms.y = 0;
-          bms.first_child.x = -meta_background.width + rw;
-          bms.first_child.y = 0;
-          bms.first_child.set_clip(
-            -bms.first_child.x + bg_offset_x,
-            0 + bg_offset_y,
-            dock._background.width - (dock.extension.border_thickness && 0),
-            dock._background.height - (dock.extension.border_thickness && 0)
-          );
+          x = -meta_background.width + rw;
           break;
         case 'bottom':
         default:
-          bms.x = 0;
-          bms.y = 0;
-          bms.first_child.x = 0;
-          bms.first_child.y = -meta_background.height + rh;
-          bms.first_child.set_clip(
-            0 + bg_offset_x,
-            -bms.first_child.y + bg_offset_y,
-            dock._background.width - (dock.extension.border_thickness && 0),
-            dock._background.height - (dock.extension.border_thickness && 0)
-          );
+          y = -meta_background.height + rh;
           break;
       }
 
-      let opacity = (dock.extension.background_color[3] ?? 0.5) * 54 + 200;
+      const opacity = (dock.extension.background_color[3] ?? 0.5) * 54 + 200;
+      const radius = dock.extension.computed_border_radius;
+      const layout = [bms, container, meta_background, x, y, bg_offset_x,
+        bg_offset_y, dock._background.width, dock._background.height, opacity, radius];
+      if (animator._bmsLayout?.every((value, index) => value === layout[index])) return;
+      animator._bmsLayout = layout;
+
+      bms.x = 0;
+      bms.y = 0;
+      container.x = x;
+      container.y = y;
+      container.set_clip(bg_offset_x - x, bg_offset_y - y,
+        dock._background.width, dock._background.height);
       meta_background.opacity = opacity;
 
-      animator._blur_effects = bms.first_child.get_effects();
+      animator._blur_effects = container.get_effects();
       if (animator._blur_effects) {
         animator._blur_effects.forEach((e) => {
           if (e.constructor.name == 'CornerEffect') {
-            e.radius = dock.extension.computed_border_radius;
+            e.radius = radius;
           }
         });
       }
@@ -268,5 +283,7 @@ export const Integrations = class {
 
     // bms version incompatible
     bms.visible = false;
+    animator._bmsLayout = null;
+    animator._blur_effects = null;
   }
 };

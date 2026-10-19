@@ -113,16 +113,29 @@ function draw_text(ctx, showtext, font = 'DejaVuSans 42') {
   return [w, h];
 }
 
-function set_color(ctx, clr, alpha) {
+function set_color(ctx, clr, alpha = 1) {
   if (typeof clr === 'string') {
-    const fn = Cogl?.Color.from_string || Clutter?.Color.from_string;
-    const [, cc] = fn(clr);
-    ctx.setSourceRGBA(cc.red, cc.green, cc.blue, alpha);
-  } else {
-    if (clr.red) {
-      ctx.setSourceRGBA(clr.red, clr.green, clr.blue, alpha);
-    } else {
-      ctx.setSourceRGBA(clr[0], clr[1], clr[2], alpha);
+    let fn = Clutter?.Color?.from_string || Cogl?.Color?.from_string;
+    if (fn) {
+      const [success, cc] = fn(clr);
+      if (success && cc) {
+        ctx.setSourceRGBA(cc.red / 255, cc.green / 255, cc.blue / 255, alpha);
+        return;
+      }
+    }
+    ctx.setSourceRGBA(1, 1, 1, alpha);
+  } else if (clr) {
+    if (clr.red !== undefined) {
+      const byteColor =
+        (Cogl.Color && clr instanceof Cogl.Color) ||
+        (Clutter.Color && clr instanceof Clutter.Color) ||
+        Math.max(clr.red, clr.green, clr.blue) > 1;
+      const scale = byteColor ? 255 : 1;
+      ctx.setSourceRGBA(clr.red / scale, clr.green / scale, clr.blue / scale, alpha);
+    } else if (Array.isArray(clr)) {
+      const scale = Math.max(clr[0], clr[1], clr[2]) > 1 ? 255 : 1;
+      let a = clr[3] !== undefined ? clr[3] : alpha;
+      ctx.setSourceRGBA(clr[0] / scale, clr[1] / scale, clr[2] / scale, a);
     }
   }
 }
