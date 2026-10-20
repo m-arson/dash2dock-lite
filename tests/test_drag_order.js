@@ -131,7 +131,7 @@ const mocks = {
     removeDragMonitor: monitor => dragMonitors.delete(monitor)},
   GObject: {registerClass: (...args) => args.at(-1)},
   St: {Widget: Actor, Bin: Actor},
-  Clutter: {TextDirection: {LTR: 1, RTL: 2}, EVENT_STOP: true},
+  Clutter: {TextDirection: {LTR: 1, RTL: 2}, EVENT_STOP: true, EVENT_PROPAGATE: false},
   Graphene: {Point: class {}},
   Config: {PACKAGE_VERSION: '48'},
   Fav: {getAppFavorites: () => favorites},
@@ -388,9 +388,17 @@ for (const vertical of [true, false]) {
 {
   const dock = Object.create(Dock.prototype);
   const handlers = new Map();
+  const buttonHandlers = new Map();
   let connections = 0;
+  let buttonConnections = 0;
   let labelVisible = false;
-  const appsIcon = new Actor({child: {}, _icon: {}, _button: {}, _label: {}});
+  const button = new Actor({toggle_mode: true});
+  button.connectObject = (...args) => {
+    buttonConnections++;
+    for (let index = 0; index < args.length - 1; index += 2)
+      buttonHandlers.set(args[index], args[index + 1]);
+  };
+  const appsIcon = new Actor({child: button, _icon: {}, _button: button, _label: {}});
   appsIcon.showLabel = () => { labelVisible = true; };
   appsIcon.hideLabel = () => { labelVisible = false; };
   appsIcon.connectObject = (...args) => {
@@ -407,8 +415,8 @@ for (const vertical of [true, false]) {
     return true;
   };
   dock._findIcons();
-  equal([appsIcon.reactive, appsIcon._button.reactive], [true, false],
-    'animated Show Apps receives events on its container');
+  equal([appsIcon.reactive, button.reactive, button.track_hover, button.toggle_mode],
+    [true, true, true, false], 'animated Show Apps retains its native hit target without native toggling');
   handlers.get('enter-event')();
   equal(labelVisible, true, 'container hover shows Show Apps label');
   handlers.get('leave-event')();
@@ -419,7 +427,8 @@ for (const vertical of [true, false]) {
   appsIcon._icon = {};
   dock._icons = null;
   dock._findIcons();
-  equal(connections, 1, 'cache rebuild and texture replacement keep one event connection');
+  equal([connections, buttonConnections], [1, 1],
+    'cache rebuild and texture replacement keep one container and native connection');
 
   let shown = 0;
   let hidden = 0;
@@ -427,14 +436,37 @@ for (const vertical of [true, false]) {
   overview.showApps = () => shown++;
   overview.hide = () => hidden++;
   overview.visible = false;
-  equal(handlers.get('button-press-event')(), true, 'Show Apps consumes its button press');
+  equal(handlers.get('button-press-event')(), false,
+    'allocated native button bypasses container press activation');
+  equal(shown, 0, 'native press does not activate before its click');
+  buttonHandlers.get('clicked')();
+  equal(shown, 1, 'native mouse click activates the grid exactly once');
+  handlers.get('button-press-event')();
+  equal(shown, 1, 'a bubbled native press cannot activate a second time');
   overview.visible = true;
   overview.dash.showAppsButton.checked = false;
-  handlers.get('button-press-event')();
-  equal([shown, hidden], [2, 0], 'desktop and window overview open the app grid');
+  buttonHandlers.get('clicked')();
+  equal([shown, hidden], [2, 0], 'native touch click opens the app grid exactly once');
   overview.dash.showAppsButton.checked = true;
+  buttonHandlers.get('clicked')();
+  equal([shown, hidden], [2, 1], 'native activation closes the app grid using overview state');
+
+  button.width = 0;
+  overview.visible = false;
+  equal(handlers.get('button-press-event')(), true,
+    'zero-allocation Show Apps keeps the container press fallback');
+  equal([shown, hidden], [3, 1], 'zero-allocation fallback opens the grid once');
+  button.width = 40;
+  button.height = 0;
   handlers.get('button-press-event')();
-  equal([shown, hidden], [2, 1], 'app grid closes using the overview button state');
+  equal(shown, 4, 'zero height also uses the older Shell container fallback');
+  appsIcon._button = null;
+  handlers.get('button-press-event')();
+  equal(shown, 5, 'missing native button retains container activation');
+  appsIcon._d2dlDestroying = true;
+  buttonHandlers.get('clicked')();
+  handlers.get('button-press-event')();
+  equal([shown, hidden], [5, 1], 'destroying Show Apps cannot activate from stale handlers');
 }
 
 const [, itemBytes] = Gio.File.new_for_uri(import.meta.url).get_parent()

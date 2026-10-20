@@ -3,6 +3,7 @@
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Fav from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+import * as PointerWatcher from 'resource:///org/gnome/shell/ui/pointerWatcher.js';
 
 import Shell from 'gi://Shell';
 import GObject from 'gi://GObject';
@@ -61,6 +62,14 @@ const SHELL_HAS_INPUT_REGION =
 
 const inputRegionParam = (affectsInputRegion) =>
   SHELL_HAS_INPUT_REGION ? { affectsInputRegion } : {};
+
+const actorRect = (actor) => {
+  if (!actor || actor.visible === false) return null;
+  const [x, y] = actor.get_transformed_position();
+  const [width, height] = actor.get_transformed_size();
+  return [x, y, width, height].every(Number.isFinite) && width > 0 && height > 0
+    ? [x, y, width, height] : null;
+};
 
 // Gnome 48 and older: Dash connects to these shared objects and never
 // disconnects, so record what it connects and disconnect it ourselves
@@ -273,7 +282,9 @@ export let Dock = GObject.registerClass(
       if (SHELL_HAS_INPUT_REGION) {
         this.inputArea = new St.Widget({
           name: 'DockInputArea',
-          reactive: true,
+          // This supplies an X11 window shape, not an event target. Actual
+          // buttons receive input, including their magnified overhang.
+          reactive: false,
         });
       }
       this.dwell = new St.Widget({
@@ -310,6 +321,7 @@ export let Dock = GObject.registerClass(
     _prepareDashDestroy(dash) {
       if (!dash._d2dlDestroying) {
         dash._d2dlDestroying = true;
+        this._restoreIconInputs();
         this.cancelAnimations();
         this._cancelFavoriteDrop(dash);
         this._clearDashLabelTimeouts(dash);
@@ -555,6 +567,7 @@ export let Dock = GObject.registerClass(
       }
       if (!this._hidden) {
         this._hidden = true;
+        this._syncPointerWatch(false);
         this._beginAnimation();
       }
     }
@@ -703,6 +716,7 @@ export let Dock = GObject.registerClass(
     }
 
     _setDragState(dragging, icon = null) {
+      if (dragging) this._restoreIconInputs();
       this._dragging = dragging;
       this._dragged = dragging ? icon ?? this._dragged : null;
       this._icons = null;
@@ -898,6 +912,7 @@ export let Dock = GObject.registerClass(
       if (!this._onChrome) {
         return;
       }
+      this._restoreIconInputs();
       if (SHELL_HAS_INPUT_REGION && this.inputArea) {
         Main.layoutManager.removeChrome(this.inputArea);
       }
@@ -1109,6 +1124,7 @@ export let Dock = GObject.registerClass(
     }
 
     _cleanupIcon(c) {
+      this._restoreIconInput(c);
       if (c._image && c._image.get_parent()) {
         if (this._clock === c._image) this._clock = null;
         if (this._calendar === c._image) this._calendar = null;
@@ -1197,22 +1213,35 @@ export let Dock = GObject.registerClass(
       if (this.dash._showAppsIcon) {
         this.dash._showAppsIcon.visible = this.extension.apps_icon;
         if (this._inspectIcon(this.dash._showAppsIcon)) {
-          // presses on the icon bubble up to the item; handle them there
-          // since the icon may be allocated no space (Gnome 42 to 46)
           let appsIcon = this.dash._showAppsIcon;
+          const activate = () => {
+            if (appsIcon._d2dlDestroying || this._destroyed) return;
+            const showAppsButton = Main.overview.dash.showAppsButton ??
+              Main.overview.dash._showAppsIcon?.toggleButton;
+            if (Main.overview.visible && showAppsButton && showAppsButton.checked) {
+              Main.overview.hide();
+            } else {
+              Main.overview.showApps();
+            }
+          };
+          const button = appsIcon._button;
+          if (button && !button._d2dlShowAppsConnected) {
+            button._d2dlShowAppsConnected = true;
+            // Native clicked handles mouse, touch and keyboard activation.
+            button.connectObject('clicked', activate, this);
+          }
           if (!appsIcon._pressConnected) {
             appsIcon._pressConnected = true;
             appsIcon.reactive = true;
             appsIcon.connectObject(
               'button-press-event',
               () => {
-                const showAppsButton = Main.overview.dash.showAppsButton ??
-                  Main.overview.dash._showAppsIcon?.toggleButton;
-                if (Main.overview.visible && showAppsButton && showAppsButton.checked) {
-                  Main.overview.hide();
-                } else {
-                  Main.overview.showApps();
-                }
+                // Older Shell versions can allocate the native button no
+                // space. Only that case needs activation on the container.
+                const nativeButton = appsIcon._button;
+                if (nativeButton && nativeButton.width > 0 && nativeButton.height > 0)
+                  return Clutter.EVENT_PROPAGATE;
+                activate();
                 return Clutter.EVENT_STOP;
               },
               'enter-event',
@@ -1228,8 +1257,6 @@ export let Dock = GObject.registerClass(
           }
         }
       }
-
-      let noAnimation = !this.extension.animate_icons_unmute;
 
       let pv = new Point();
       pv.x = 0.5;
@@ -1248,12 +1275,11 @@ export let Dock = GObject.registerClass(
         }
         c._icon.pivot_point = pv;
         if (c._button) {
-          c._button.reactive = noAnimation;
-          c._button.track_hover = noAnimation;
-          c.toggle_mode = false;
+          c._button.reactive = true;
+          c._button.track_hover = true;
+          c._button.toggle_mode = false;
         }
         if (c._grid) {
-          // c._grid.style = noAnimation ? '' : 'background: none !important;';
           c._grid.style = 'background: none !important;';
         }
         if (c._appwell && !c._appwell._activate) {
@@ -1612,7 +1638,10 @@ export let Dock = GObject.registerClass(
     }
 
     animate(dt = 15) {
-      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) {
+        this._syncPointerWatch(false);
+        return;
+      }
       if (this._preview) {
         let p = null;
 
@@ -1644,6 +1673,98 @@ export let Dock = GObject.registerClass(
       }
     }
 
+    _syncIconInput(icon) {
+      const button = icon._appwell ?? icon._button;
+      const rect = actorRect(icon._renderer);
+      if (!button || !rect || this._hidden || this._destroyed || this._dragging ||
+          icon._d2dlDestroying || this.extension.animate_icons_unmute === false ||
+          !(button.width > 0 && button.height > 0)) {
+        this._restoreIconInput(icon);
+        return;
+      }
+      if (icon._inputButton && icon._inputButton !== button) this._restoreIconInput(icon);
+      const current = actorRect(button);
+      const sx = button.scale_x ?? 1;
+      const sy = button.scale_y ?? 1;
+      if (!current || sx <= 0 || sy <= 0) {
+        this._restoreIconInput(icon);
+        return;
+      }
+      const parentScaleX = current[2] / (button.width * sx);
+      const parentScaleY = current[3] / (button.height * sy);
+      const scaleX = rect[2] / (button.width * parentScaleX);
+      const scaleY = rect[3] / (button.height * parentScaleY);
+      if (![parentScaleX, parentScaleY, scaleX, scaleY].every(value =>
+        Number.isFinite(value) && value > 0)) return;
+
+      // Transform the existing St.Button, keeping its native click, menu,
+      // touch and drag handlers and its container's layout allocation intact.
+      if (!button._d2dlInputTransform) {
+        button._d2dlInputTransform = {
+          scale_x: sx, scale_y: sy,
+          translation_x: button.translation_x ?? 0,
+          translation_y: button.translation_y ?? 0,
+        };
+        icon._inputButton = button;
+        (this._inputIcons ??= new Set()).add(icon);
+      }
+      let changed = false;
+      for (const [property, value] of [['scale_x', scaleX], ['scale_y', scaleY]]) {
+        if (Math.abs(button[property] - value) > 0.000001) {
+          button[property] = value;
+          changed = true;
+        }
+      }
+      // Re-read after scaling: Clutter applies scale around the button pivot.
+      const [x, y] = button.get_transformed_position();
+      for (const [property, delta] of [
+        ['translation_x', (rect[0] - x) / parentScaleX],
+        ['translation_y', (rect[1] - y) / parentScaleY],
+      ]) {
+        if (Number.isFinite(delta) && Math.abs(delta) > 0.000001) {
+          button[property] = (button[property] ?? 0) + delta;
+          changed = true;
+        }
+      }
+      icon._inputRect = rect;
+
+      // On X11 each real button contributes its own rectangle, avoiding a
+      // broad invisible strip between magnified icons. Wayland picks actors.
+      if (this._onChrome && SHELL_HAS_INPUT_REGION && !Meta.is_wayland_compositor()) {
+        if (!button._d2dlInputTracked) {
+          Main.layoutManager.trackChrome(button, {
+            affectsInputRegion: true, affectsStruts: false, trackFullscreen: false,
+          });
+          button._d2dlInputTracked = true;
+        } else if (changed) {
+          Main.layoutManager._queueUpdateRegions();
+        }
+      }
+    }
+
+    _restoreIconInput(icon) {
+      const button = icon._inputButton;
+      icon._inputRect = null;
+      icon._inputButton = null;
+      this._inputIcons?.delete(icon);
+      if (!button) return;
+      if (button._d2dlInputTracked) {
+        Main.layoutManager.untrackChrome(button);
+        button._d2dlInputTracked = false;
+      }
+      const original = button._d2dlInputTransform;
+      delete button._d2dlInputTransform;
+      if (original && !this._destroyed && !icon._d2dlDestroying) {
+        for (const [property, value] of Object.entries(original)) {
+          if (button[property] !== value) button[property] = value;
+        }
+      }
+    }
+
+    _restoreIconInputs() {
+      for (const icon of [...(this._inputIcons ?? [])]) this._restoreIconInput(icon);
+    }
+
     //! move these generic functions outside of this class
     _isWithinDash(p) {
       if (this._hidden) {
@@ -1654,7 +1775,37 @@ export let Dock = GObject.registerClass(
       if (isInRect([xy[0], xy[1], wh[0], wh[1]], p, 20)) {
         return true;
       }
+      if ((this._icons ?? []).some(icon => icon._inputRect && isInRect(icon._inputRect, p))) {
+        return true;
+      }
       return false;
+    }
+
+    _syncPointerWatch(active) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying || this._hidden)
+        active = false;
+
+      if (!active) {
+        this._pointerWatch?.remove();
+        this._pointerWatch = null;
+        return;
+      }
+      if (this._pointerWatch) return;
+
+      // Click grabs can swallow the final actor leave/motion event. The shared
+      // Shell watcher only calls us when the pointer moves, and sleeps at idle.
+      const watch = PointerWatcher.getPointerWatcher().addWatch(100, (x, y) => {
+        if (this._pointerWatch !== watch) return;
+        if (this._destroyed || !this.dash || this.dash._d2dlDestroying || this._hidden) {
+          this._syncPointerWatch(false);
+          return;
+        }
+        if (this._dragging) return;
+        this._beginAnimation();
+        if (!this._isWithinDash([x, y]))
+          this.autohider?._debounceCheckHide();
+      });
+      this._pointerWatch = watch;
     }
 
     _beginAnimation(caller) {
@@ -1692,6 +1843,7 @@ export let Dock = GObject.registerClass(
     }
 
     _endAnimation() {
+      this._syncPointerWatch(false);
       if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this.extension.debug_visual) {
         this.remove_style_class_name('hi');
@@ -1764,6 +1916,7 @@ export let Dock = GObject.registerClass(
     }
 
     cancelAnimations() {
+      this._syncPointerWatch(false);
       for (const sequence of this._deferredActions ?? [])
         this.extension._hiTimer?.cancel(sequence);
       this._deferredActions?.clear();

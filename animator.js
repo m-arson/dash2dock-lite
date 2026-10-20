@@ -38,6 +38,7 @@ export let Animator = class {
   disable() {
     this._enabled = false;
     this.cancelAnimations();
+    this.dock?._restoreIconInputs?.();
     if (this._target) {
       this._target.destroy_all_children();
     }
@@ -1011,6 +1012,10 @@ export let Animator = class {
 
     dock.struts.visible = !dock._hidden;
     dock.dash.opacity = 255;
+    for (const icon of animateIcons) dock._syncIconInput?.(icon);
+    dock._syncPointerWatch?.(animateIcons.some(icon =>
+      icon._scale > 1.01 || Math.abs(icon._icon.translation_x) > 0.5 ||
+      Math.abs(icon._icon.translation_y) > 0.5));
 
     //---------------------
     // animate the list
@@ -1057,6 +1062,7 @@ export let Animator = class {
       actor.translation_x = x;
       actor.translation_y = y;
     }
+    this.dock?._syncIconInput?.(container);
     if (container._label) container._label.opacity = 0;
   }
 

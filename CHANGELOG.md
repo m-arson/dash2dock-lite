@@ -9,6 +9,8 @@
 
 # Next Release
 
+* match native button hit areas to magnified icons, including outside the dock background; recover zoom after click grabs swallow pointer exit events
+* keep Show Apps mouse, touch and keyboard activation on its native button while retaining the older zero-size fallback
 * expose allocated dock actors to newer Blur My Shell versions and let its surface tracker manage blur geometry
 * wake settled docks for live visual settings and late configuration; restart correctly after changing FPS and refresh cached folder launchers
 * allow dragging apps into an empty dock or an empty favorites-only dock

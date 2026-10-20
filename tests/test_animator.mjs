@@ -90,6 +90,9 @@ const extension = {
 let within = true;
 let endRearms = 0;
 let settles = 0;
+const inputSyncs = [];
+const pointerWatchStates = [];
+let inputRestores = 0;
 const dock = {
   extension, _icons: [icon], _iconSizeScaledDown: 32, _iconSize: 32,
   _scaleFactor: 1, _edge_distance: 0, _position: 'bottom', _separators: [],
@@ -103,6 +106,22 @@ const dock = {
   _isWithinDash: () => within, _updateTransparenies() {},
   _debounceEndAnimation() { endRearms++; }, _beginAnimation() {},
   _settleAnimation() { settles++; },
+  _syncIconInput(container) {
+    const renderer = container._renderer;
+    assert.ok(renderer?.visible, 'native input sync follows the rendered icon commit');
+    assert.ok(Number.isFinite(renderer.x) && Number.isFinite(renderer.y),
+      'input sync sees a finite committed render position');
+    assert.equal(renderer.width * renderer.scale_x,
+      this._iconSizeScaledDown * this._scaleFactor * container._scale,
+      'input sync sees the current rendered size rather than the target size');
+    inputSyncs.push({container, x: renderer.x, y: renderer.y,
+      translation_x: renderer.translation_x, translation_y: renderer.translation_y});
+  },
+  _syncPointerWatch(active) { pointerWatchStates.push(active); },
+  _restoreIconInputs() {
+    inputRestores++;
+    assert.ok(!icon._renderer.destroyed, 'disable restores input before destroying renderer geometry');
+  },
 };
 background._padding = 0;
 const animator = new context.Animator();
@@ -111,6 +130,8 @@ animator.dock = dock; animator.extension = extension; animator.enable();
 for (let i = 0; i < 20; i++) animator.animate(16);
 assert.ok(animator._renderers[0].scale_x > 1);
 assert.equal(icon.positionReads, 20, 'each frame reads an icon stage position once');
+assert.equal(inputSyncs.length, 20, 'each animated frame synchronizes the native input target');
+assert.equal(pointerWatchStates.at(-1), true, 'magnified rendered icons retain pointer recovery');
 assert.equal(dock.renderArea.children.length, 1, 'unused indicator canvases are not allocated');
 icon._label = new Actor({text: 'App', opacity: 0});
 for (let i = 0; i < 250; i++) animator.animate(16);
@@ -127,8 +148,14 @@ renderer.set_scale = setScale;
 assert.ok(settles > 0, 'settled hover suspends the timer while preserving magnification');
 assert.equal(dock.inputArea.x, 7, 'input area uses transformed background, not monitor origin');
 within = false;
+animator.animate(16);
+assert.equal(icon._targetScale, 1, 'leaving targets the resting scale');
+assert.ok(icon._scale > 1, 'leaving interpolates the rendered icon back to rest');
+assert.equal(pointerWatchStates.at(-1), true,
+  'pointer recovery persists during return even after the target is unzoomed');
 for (let i = 0; i < 250; i++) animator.animate(16);
 assert.equal(animator._renderers[0].scale_x, 1, 'zoom fully settles to resting scale');
+assert.equal(pointerWatchStates.at(-1), false, 'resting rendered icons release pointer recovery');
 assert.ok(endRearms > 1, 'zoom keeps animation alive while settling');
 const outsideRearms = endRearms;
 for (let i = 0; i < 100; i++) animator.animate(16);
@@ -208,8 +235,13 @@ animator.bounceIcon(appwell);
 animator.bounceIcon(appwell);
 assert.equal(timer.sequences.size, 1);
 const sequence = [...timer.sequences][0];
+const beforeBounceInput = inputSyncs.length;
 sequence.frames[0]._func({_time: 125, _duration: 250});
 assert.notEqual(appwell.translation_y, 0);
+assert.equal(inputSyncs.length, beforeBounceInput + 1,
+  'a bounce frame synchronizes the native input target outside Animator.animate');
+assert.equal(inputSyncs.at(-1).translation_y, appwell.translation_y,
+  'bounce input sync follows the translated renderer');
 appwell.destroy();
 assert.equal(timer.sequences.size, 0, 'destroy cancels bounce callbacks');
 const another = new Actor(); another.parent = icon;
@@ -219,6 +251,7 @@ assert.equal(another._bounce, false);
 assert.equal(timer.sequences.size, 0);
 assert.equal(another.signals.size, 0);
 animator.disable();
+assert.equal(inputRestores, 1, 'disabling restores transformed native input targets');
 dock.layout = () => { throw new Error('disabled animator touched dock'); };
 animator.animate(16);
 assert.equal(animator._target, null);

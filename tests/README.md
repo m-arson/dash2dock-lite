@@ -25,6 +25,10 @@ Live settings/configuration tests exercise waking settled docks and replacing
 cached folder launchers. Empty-dock drag tests use the native Dash child-count
 contract. Blur My Shell compatibility tests exercise discovery before allocation,
 signal-capable dock actors, blur geometry ownership, and older integration hooks.
+Magnified input tests match native button bounds to rendered icons at all four
+edges, with scaled parents and pivots, and verify X11 tracking, native drag
+restoration and idle stability. Pointer watch tests cover missed exits after
+click grabs, stationary hover, and cleanup on hide, cancellation and teardown.
 Packaging tests build modern/legacy bundles in a guarded temporary
 directory. Upgrade tests simulate installs, exact preference preservation,
 corrupted/partial-install rollback, and unsafe backup destinations entirely in
