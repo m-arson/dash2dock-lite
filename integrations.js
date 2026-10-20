@@ -152,6 +152,15 @@ export const Integrations = class {
     }
     let bms = Main.extensionManager.lookup('blur-my-shell@aunetx');
     const target = bms?.stateObj?._dash_to_dock_blur;
+    // Newer managers own signal-driven DockSurface geometry. Their discovery
+    // and allocation handling must keep running, including update-size signals.
+    this._bmsUsesDockSurfaces = Boolean(target?.pending_docks &&
+      typeof target.queue_discovery === 'function');
+    if (this._bmsUsesDockSurfaces) {
+      this._restoreBmsHook();
+      this._bms = bms;
+      return;
+    }
     if (this._bmsHook?.target === target && target && this.extension.blur_background &&
         target.update_size === this._bmsHook.wrapper) return;
     this._restoreBmsHook();
@@ -181,6 +190,7 @@ export const Integrations = class {
       }
     });
     this._bms = null;
+    this._bmsUsesDockSurfaces = false;
   }
 
   _restoreBmsHook() {
@@ -209,6 +219,19 @@ export const Integrations = class {
     animator._bms = bms;
 
     if (!bms) {
+      animator._bmsLayout = null;
+      animator._blur_effects = null;
+      return;
+    }
+
+    if (this._bmsUsesDockSurfaces) {
+      // DockSurface follows the real background's position, size and transforms.
+      // Only control our blur preference here; clipping it again would race its
+      // before-redraw update and apply legacy offsets to the new geometry.
+      const visible = dock.extension.blur_background && dock._background.opacity !== 0;
+      if (bms.first_child && bms.first_child.visible !== visible) {
+        bms.first_child.visible = visible;
+      }
       animator._bmsLayout = null;
       animator._blur_effects = null;
       return;

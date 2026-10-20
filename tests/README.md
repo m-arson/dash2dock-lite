@@ -23,7 +23,9 @@ animate, and indicator canvases release when their content disappears. Shader
 checks ensure repeated paints do not write uniforms or reload source files.
 Live settings/configuration tests exercise waking settled docks and replacing
 cached folder launchers. Empty-dock drag tests use the native Dash child-count
-contract. Packaging tests build modern/legacy bundles in a guarded temporary
+contract. Blur My Shell compatibility tests exercise discovery before allocation,
+signal-capable dock actors, blur geometry ownership, and older integration hooks.
+Packaging tests build modern/legacy bundles in a guarded temporary
 directory. Upgrade tests simulate installs, exact preference preservation,
 corrupted/partial-install rollback, and unsafe backup destinations entirely in
 temporary directories; they never invoke the real extension installer.

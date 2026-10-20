@@ -235,35 +235,20 @@ export let Dock = GObject.registerClass(
       this._alignment = DockAlignment.CENTER;
       this._monitorIndex = Main.layoutManager.primaryIndex;
 
-      this._background = new DockBackground({ name: 'd2daBackground' });
+      this._background = new DockBackground({ name: 'dash', style_class: 'd2da-background' });
+      this._background._background = this._background;
       this.add_child(this._background);
-
-      // for blur-my-shell
-      this._slider = {
-        get_child: () => {
-          return this;
-        },
-        get_parent: () => {
-          return this;
-        },
-      };
-
-      // pretend to be Dash-to-Dock
-      // required by blur-my-shell to find the dash upon disabling
-      this.fake_dash = new St.Widget({ name: 'dash' });
-      this.add_child(this.fake_dash);
-      this.fake_dash_background = new St.Widget({
-        style_class: 'dash-background',
-      });
-      this.fake_dash.add_child(this.fake_dash_background);
-      this.fake_dash._background = this.fake_dash_background;
-      this.fake_dash.visible = false;
 
       this.renderArea = new St.Widget({
         name: 'DockRenderArea',
         reactive: false,
         track_hover: false,
       });
+      // Blur My Shell discovers the Dash-to-Dock slider and its named dash.
+      // Use our real renderer/background so allocation, autohide and geometry
+      // signals describe what is painted; a hidden dummy can never be ready.
+      this.renderArea.get_child = () => this;
+      this._slider = this.renderArea;
       this.renderArea.opacity = 0;
       this.add_child(this.renderArea);
 

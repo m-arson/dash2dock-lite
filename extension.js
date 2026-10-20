@@ -1194,7 +1194,7 @@ export default class Dash2DockLiteExt extends Extension {
       this.computed_border_radius = r;
       let rgba = this._style.rgba(this.background_color);
       ss.push(`background: rgba(${rgba});`);
-      styles.push(`#d2daBackground { ${ss.join(' ')}}`);
+      styles.push(`#dash.d2da-background { padding: 0; ${ss.join(' ')}}`);
     }
 
     // icon backgrounds
