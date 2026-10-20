@@ -9,6 +9,7 @@
 
 # Next Release
 
+* activate an app's most recent visible window on a normal Dock click; restore only one when all are minimized, and leave focused apps and other minimized windows alone
 * match native button hit areas to magnified icons, including outside the dock background; recover zoom after click grabs swallow pointer exit events
 * keep Show Apps mouse, touch and keyboard activation on its native button while retaining the older zero-size fallback
 * expose allocated dock actors to newer Blur My Shell versions and let its surface tracker manage blur geometry

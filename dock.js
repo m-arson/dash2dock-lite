@@ -1289,9 +1289,13 @@ export let Dock = GObject.registerClass(
               if (!c._menu) {
                 this._maybeBounce(c);
               }
-              this._maybeMinimizeOrMaximize(c._appwell.app, button);
-              // pass the button on: middle click opens a new window
-              c._appwell._activate(button);
+              if (!c.custom_icon && this._activateAppWindow(c._appwell.app, button)) {
+                Main.overview.hide();
+              } else {
+                // Native activation handles launching, new-window shortcuts,
+                // and custom items such as downloads and mounted folders.
+                c._appwell._activate(button);
+              }
             } catch (err) {
               // happens with dummy DashIcons
             }
@@ -1953,99 +1957,41 @@ export let Dock = GObject.registerClass(
       });
     }
 
-    _maybeMinimizeOrMaximize(app, button) {
-      if (this._destroyed || !this.dash) return;
-      if (!app.get_windows) {
-        return;
+    _activateAppWindow(app, button) {
+      if (this._destroyed || !this.dash || !app?.get_windows ||
+          app.state !== Shell.AppState.RUNNING) return false;
+
+      // Leave new-window shortcuts and secondary-button handling to Shell.
+      // Keyboard and touch activation may supply zero or no button.
+      const event = Clutter.get_current_event();
+      const modifiers = event ? event.get_state() : 0;
+      if ((button && button !== Clutter.BUTTON_PRIMARY) ||
+          (modifiers & (Clutter.ModifierType.CONTROL_MASK |
+                        Clutter.ModifierType.BUTTON2_MASK))) return false;
+
+      const filtered = this.getAppWindowsFiltered(app);
+      // Prefer this dock's monitor, but keep a pinned app usable when all of
+      // its windows are elsewhere. This fallback still activates only one.
+      const windows = [...(filtered.length ? filtered : app.get_windows())];
+      if (!windows.length) return false;
+
+      // A second click leaves the active window and every sibling unchanged.
+      // Do not call Shell.App.activate() afterwards: it can raise the group.
+      if (windows.some(window => window.has_focus())) return true;
+
+      // Shell normally supplies MRU order. Use explicit user times when all
+      // are available, retaining that order for ties or older/missing APIs.
+      const userTimes = new Map(windows.map(window =>
+        [window, window.get_user_time?.()]));
+      if (windows.every(window => Number.isFinite(userTimes.get(window)))) {
+        windows.sort((a, b) => userTimes.get(b) - userTimes.get(a));
       }
-
-      // let windows = app.get_windows();
-      let windows = this.getAppWindowsFiltered(app);
-      if (!windows.length) {
-        return;
-      }
-
-      let event = Clutter.get_current_event();
-      let modifiers = event ? event.get_state() : 0;
-      let pressed = event?.type() == Clutter.EventType.BUTTON_PRESS;
-      let button1 = (modifiers & Clutter.ModifierType.BUTTON1_MASK) != 0;
-      let button2 = (modifiers & Clutter.ModifierType.BUTTON2_MASK) != 0;
-      let button3 = (modifiers & Clutter.ModifierType.BUTTON3_MASK) != 0;
-      let shift = (modifiers & Clutter.ModifierType.SHIFT_MASK) != 0;
-      let isMiddleButton = button == Clutter.BUTTON_MIDDLE || button2;
-      let isCtrlPressed = (modifiers & Clutter.ModifierType.CONTROL_MASK) != 0;
-      let openNewWindow =
-        app.can_open_new_window() &&
-        app.state == Shell.AppState.RUNNING &&
-        (isCtrlPressed || isMiddleButton);
-      if (openNewWindow) return;
-
-      let workspaceManager = global.workspace_manager;
-      let activeWs = workspaceManager.get_active_workspace();
-      let focusedWindow = null;
-
-      windows.forEach((w) => {
-        if (w.has_focus()) {
-          focusedWindow = w;
-        }
-      });
-
-      // delay - allow dash to actually call 'activate' first
-      if (focusedWindow) {
-        this._runDeferredAction(() => {
-          const current = new Set(app.get_windows());
-          if (!current.has(focusedWindow)) return;
-          if (shift) {
-            // Gnome 49 dropped the Meta.MaximizeFlags argument
-            let flags = focusedWindow.set_maximize_flags
-              ? []
-              : [Meta.MaximizeFlags.BOTH];
-            if (
-              (focusedWindow.is_maximized && focusedWindow.is_maximized()) ||
-              (focusedWindow.get_maximized &&
-                focusedWindow.get_maximized() == 3)
-            ) {
-              focusedWindow.unmaximize(...flags);
-            } else {
-              focusedWindow.maximize(...flags);
-            }
-          } else {
-            windows.forEach((w) => {
-              if (current.has(w)) w.minimize();
-            });
-          }
-        }, 50);
-      } else {
-        const hidden = windows.filter((w) => {
-          return w.is_hidden();
-        });
-
-        // multi-monitors fix -- where focus can seem to get lost
-        if (!hidden.length) {
-          let windows = app.get_windows().filter((w) => {
-            return w.get_monitor() == this._monitor?.index;
-          });
-          if (windows.length > 0) {
-            this._runDeferredAction(() => {
-              const window = app.get_windows().find(w => windows.includes(w));
-              if (window) this._raiseAndFocus(window);
-            }, 50);
-          }
-          return;
-        }
-
-        this._runDeferredAction(() => {
-          const current = new Set(app.get_windows());
-          windows.forEach((w) => {
-            if (current.has(w) && w.is_hidden()) {
-              w.unminimize();
-              if (w.has_focus()) {
-                w.raise();
-              }
-            }
-          });
-        }, 50);
-      }
+      const window = windows.find(candidate => !candidate.minimized) ?? windows[0];
+      // is_hidden() also includes windows on other workspaces; only a truly
+      // minimized window should be restored by an ordinary dock click.
+      if (window.minimized) window.unminimize();
+      this._raiseAndFocus(window);
+      return true;
     }
 
     _pauseAllBounce(t = 250) {

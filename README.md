@@ -1,194 +1,201 @@
-<br/>
-<p align="center">
-  <h3 align="center">Dash2Dock Animated</h3>
+# Dash2Dock Animated
 
-  <p align="center">
-    A GNOME Shell 40+ Extension
-    <br/>
-    <br/>
-  </p>
-</p>
+An animated desktop dock for GNOME Shell 46–51, based on [icedman's Dash2Dock Animated](https://github.com/icedman/dash2dock-lite). This fork is maintained on the `main` branch.
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
-
-![Contributors](https://img.shields.io/github/contributors/icedman/dash2dock-lite?color=dark-green) ![Forks](https://img.shields.io/github/forks/icedman/dash2dock-lite?style=social) ![Stargazers](https://img.shields.io/github/stars/icedman/dash2dock-lite?style=social) ![Issues](https://img.shields.io/github/issues/icedman/dash2dock-lite) ![License](https://img.shields.io/github/license/icedman/dash2dock-lite) 
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
 
 ![Screen Shot](https://raw.githubusercontent.com/icedman/dash2dock-lite/main/screenshots/Screenshot%20from%202024-03-19%2015-31-27.png)
 
-### Notice
+## Current Version
 
-* Supports Gnome 46, 47, 48, 49, 50, 51
-* Gnome 42, 43, 44 through ```make g44``` (see below)
-* Prior versions are largely unsupported
+Version **103** includes:
 
-### Features
+* Mac-style app activation: clicking a running app focuses its most recently used unminimized eligible window. If all its eligible windows are minimized, only the most recently used window is restored. Clicking the focused app again keeps it focused.
+* Native Ctrl-click and middle-click actions for opening a new window, right-click window menus, and custom folder launchers.
+* Click targets that follow enlarged icons beyond the dock frame, and zoom recovery when leaving after a click.
+* Updated Blur My Shell integration, live settings updates, favorite reordering, and reduced idle animation and resource use.
 
-* Multi-monitor support (new!)
-* Dash docked at the desktop
-* Animated dock icons
-* Resize icons
-* Autohide/intellihide
-* Dock positions: bottom, top, left, right
-* Scrollwheel to cycle windows
-* Click to maximize/minimize windows
-* Style top panel
-* Panel mode
-* Show/Hide Apps icon
-* Analog clock
-* Dynamic calendar
-* Dynamic trash icon
-* Mounted devices
-* Downloads icon with fan animation (new!)
-* Icon color effects(Tint, Monochrome)
-* Custom icons
+The app activation policy follows common Mac Dock behavior; GNOME and individual applications can still differ. See the [changelog](CHANGELOG.md) for the full change list.
 
-### Third-Party Compatibility
+## Compatibility
 
-* Compiz Magic Lamp Animation
-* Blur my Shell
+* The modern package declares GNOME Shell **46, 47, 48, 49, 50, and 51** support.
+* GNOME Shell **42, 43, and 44** use the separate [legacy build](#gnome-shell-42-44).
+* Other Shell versions are not covered by these build targets. Declared compatibility still requires testing in the target desktop session.
+* Integrations include Compiz Magic Lamp Animation and Blur My Shell.
 
-### Prerequisites
+## Features
 
-Requirements:
+* Animated, resizable dock icons and multi-monitor support
+* Bottom, top, left, and right dock positions
+* Autohide/intellihide and panel mode
+* Scrollwheel window cycling and Mac-style app activation
+* Favorite reordering and an optional Show Apps button
+* Analog clock, dynamic calendar and Trash icons, mounted devices, and a Downloads fan
+* Top panel styling, icon tint/monochrome effects, themes, and custom icons
 
-* GNOME Shell (version 42+)
+## Installation
 
-### Installation
+Build requirements are Git, Make, zip, GNOME's `gnome-extensions` CLI, and GLib schema tools. Run installation commands in your normal desktop session.
 
-Manual Installation: 
-- Clone this repo
-```bash
-$ git clone https://github.com/icedman/dash2dock-lite.git
-```
-- Use the `Makefile` to build and install
-```bash 
-$ cd dash2dock-lite
-$ make
+Clone this fork and build the modern extension archive:
+
+```sh
+git clone --branch main https://github.com/m-arson/dash2dock-lite.git
+cd dash2dock-lite
+make publish
 ```
 
-Using the AUR (Arch User Repository):
-*This requires an Arch-based distribution to work:*
-```bash
-$ git clone https://aur.archlinux.org/gnome-shell-extension-dash2dock-lite.git
-$ makepkg -si
+For a **new installation**:
+
+```sh
+gnome-extensions install dash2dock-lite@icedman.github.com.zip
 ```
 
-From Gnome Extensions Repository
+Log out and back in so GNOME Shell discovers the extension, then enable it through the Extensions app or:
 
-Visit [https://extensions.gnome.org/extension/4994/dash2dock-lite/](https://extensions.gnome.org/extension/4994/dash2dock-lite/)
+```sh
+gnome-extensions enable dash2dock-lite@icedman.github.com
+```
+
+### Updating an Existing Installation
+
+For an existing installation, build the archive with `make publish`, then use the update helper. It requires Python 3, `dconf`, and `gnome-extensions`:
+
+```sh
+python3 tools/apply_update.py dash2dock-lite@icedman.github.com.zip \
+  --backup-root "$HOME/.local/share/dash2dock-lite-backups"
+```
+
+The helper backs up installed files, extension preferences, custom configuration, and relevant Shell settings. It validates the archive, verifies installed files and preserved extension preferences, and restores the previous installation and preferences if installation fails. It prints the backup location and records the result in `manifest.json` there.
+
+This helper requires an existing extension directory that is not a symlink and an unchanged settings schema. A schema change requires a reviewed migration. Log out and back in after a successful update to load the new code.
+
+For direct development installation, `make build` compiles schemas and `make install` copies the working tree into the user extension directory. The default `make` target also runs ESLint, which must be installed separately.
+
+### Other Distribution Channels
+
+The [GNOME Extensions listing](https://extensions.gnome.org/extension/4994/dash2dock-lite/) and the [Arch AUR package](https://aur.archlinux.org/packages/gnome-shell-extension-dash2dock-lite) distribute upstream versions; they may not include this fork's changes.
 
 ## Theme Support
 
-Export your settings under Style > Themes Button > "Export"...
+Export settings through **Style > Themes > Export**. The preferences window reports the output path, `/tmp/<username>-theme.json`.
 
-This will be saved to ```/tmp/theme.json```. Edit this json file and save under ```~/.config/d2da/themes``` or at ```{extension_path}/dash2dock-animated/themes``` so that it becomes available at the extension settings app.
+Edit the JSON and save it with a `.json` extension under `~/.config/d2da/themes/`. Bundled themes live under `<extension_path>/themes/`. Reopen preferences to load newly added themes.
 
 ## Custom Icons
 
-Create a folder under ```sh~/.config/d2da/icons``` and place here your SVG icons. Then create a file under ```sh~/.config/d2da/icons.json``` and create a mapping file with the following format:
+Create `~/.config/d2da/icons/` for SVG icons and map them in `~/.config/d2da/icons.json`:
 
 ```json
 {
   "icons": {
-     "view-app-grid-symbolic": "icons/show-apps-icon.svg",
-     "user-trash": "icons/my-own-trash.svg",
-     "user-trash-full": "icons/my-own-trash-full.svg"
+    "view-app-grid-symbolic": "icons/show-apps-icon.svg",
+    "user-trash": "icons/my-own-trash.svg",
+    "user-trash-full": "icons/my-own-trash-full.svg"
   }
 }
 ```
 
-You may also use **icon names** from your favorite icon theme. And use the following format:
+Paths are relative to `~/.config/d2da/`. You can also use names from your installed icon theme:
 
 ```json
 {
   "icons": {
-     "view-app-grid-symbolic": "show-apps-icon",
-     "user-trash": "trash",
-     "user-trash-full": "trash-full"
+    "view-app-grid-symbolic": "show-apps-icon",
+    "user-trash": "trash",
+    "user-trash-full": "trash-full"
   }
 }
 ```
 
-The icons ```show-apps-icon, trash, trash-full``` must be available on your icons theme folder. 
-
-Alternatively, you may override icons via app id:
+The named icons must exist in your icon theme. To override an application icon, use its app ID:
 
 ```json
 {
-   "apps": {
-      "spotify_spotify": "icons/spotify.svg"
-   }
+  "apps": {
+    "spotify_spotify": "icons/spotify.svg"
+  }
 }
 ```
 
-Check the log to see the icon names currently being used by Dash2Dock Animated. Search for log text such assets
+Disable and re-enable the extension after changing custom icons.
 
-```sh
-Icon created "user-trash"
-```
 ## Custom Config
 
-Create a file ```config.json``` under the folder ```~/.config/d2da/```
+Create `~/.config/d2da/config.json`:
 
 ```json
 {
   "file-explorer": "nemo",
-  "icon-size": "24"
+  "icon-size": 24
 }
 ```
-* Disable then enable extension to load config
-* file-explorer overrides the default "nautilus"
-* icon-size overrides the icon scale from the preferences panel
+
+* `file-explorer` supplies a preferred folder-opening command. Without an override, the extension tries `nautilus`, `xdg-open`, then `gio open`.
+* `icon-size` overrides the icon size from preferences with a positive numeric value.
+* Disable and re-enable the extension to reload the file.
 
 ## Custom CSS
 
-Create a file ```style.css``` under the folder ```~/.config/d2da/```
-
-For now, you will have to do some little digging with LookingGlass to know the names and style classes.
+Create `~/.config/d2da/style.css` and disable/re-enable the extension to load it. Use GNOME Shell's Looking Glass inspector to find actor names and style classes.
 
 ## Blurred Background
 
-Blurred background feature requires **imagemagick** to be install in the system. This generates the blurred image based of the desktop wallpaper.
+Dock background blur uses **Blur My Shell**. Install and enable that extension, enable its Dash to Dock integration, and enable this dock's blurred-background preference. The integration supports older blur geometry hooks and newer signal-driven dock surfaces. ImageMagick is not required.
 
-## Gnome 42, 43, 44
+## GNOME Shell 42-44
 
-Build and install Dash2Dock Animated for prior versions (before Gnome 45)
+Legacy transpilation also requires Python 3. Build a legacy archive without installing it:
 
-```make g44```
+```sh
+make publish-g44
+```
+
+Install the generated `dash2dock-lite@icedman.github.com.zip` using the GNOME CLI instructions above. For an existing installation, the update helper applies only when its settings schema matches.
+
+For direct legacy development installation:
+
+```sh
+make g44
+```
+
+Log out and back in after replacing installed extension code.
+
+## Development and Testing
+
+Development uses `main`. The automated checks require Node.js 18 or newer, GJS, Python 3, Make, GLib schema tools, zip, and unzip:
+
+```sh
+npm test
+npm run check
+glib-compile-schemas --strict --dry-run schemas
+```
+
+See [tests/README.md](tests/README.md) for regression coverage and the desktop verification checklist. Automated tests cover activation, magnified input, zoom exit handling, lifecycle cleanup, settings, packaging, and upgrade rollback. Live compositor input, Shell compatibility, rendering, CPU use, and RAM use require verification in a GNOME desktop session.
 
 ## Bug Reporting
 
-When reporting bugs. Please indicate the following:
+Include:
 
-* Linux Flavor/Distribution and version
-* Gnome version (45.xx)
-* Dash2Dock Animated release number
+* Distribution and version
+* GNOME Shell version and Wayland/X11 session type
+* Dash2Dock Animated version, dock position, and display scaling
+* Steps to reproduce, relevant settings, and screenshots when useful
+* Other enabled extensions, especially integrations
 
-Check for any exceptions in the logs by running the following at the terminal:
+Watch the Shell journal for errors:
 
 ```sh
 journalctl /usr/bin/gnome-shell -f -o cat
 ```
 
-To check incompatibilities with other extensions, try running Dash2Dock Animated with other extensions disabled.
-
-To check for lag or inefficiency. Run the following in the terminal and observer gnome-shell CPU usage.
+When investigating an extension conflict, repeat the steps with other extensions disabled. For performance reports, compare idle and stationary-hover CPU and memory before and after repeated hover, menu, and lock/unlock cycles. You can monitor the Shell process with:
 
 ```sh
 top -d 0.5
 ```
 
-On my old Dell XPS13 i5-6200U. CPU usage is about 50% with icons quality high, frame rate high, shadows on.
+## License and Attribution
 
-Please be specific on the errors encountered. Add screenshots whenever possible.
-
-## Testing Rig
-
-* Fedora 43 (Gnome 49)
-* Arch Linux (Gnome 49)
-* Fedora 37 Live (Gnome 42)
-* Ubuntu 23 (Gnome 45)
-
-## License
-
-Distributed under the GPL 3.0 License. See [LICENSE](https://github.com/icedman/dash2dock-lite/blob/main/LICENSE) for more information.
+Originally authored by **icedman**. This fork retains the upstream project's attribution and donation link. Distributed under the **GPL 3.0 License**; see [LICENSE](LICENSE).
