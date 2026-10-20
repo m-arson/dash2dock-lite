@@ -8,14 +8,16 @@ An animated desktop dock for GNOME Shell 46–51, based on [icedman's Dash2Dock 
 
 ## Current Version
 
-Version **103** includes:
+Version **104** includes:
 
-* Mac-style app activation: clicking a running app focuses its most recently used unminimized eligible window. If all its eligible windows are minimized, only the most recently used window is restored. Clicking the focused app again keeps it focused.
+* Single-window toggling: click an app to focus or restore its window, then click it again while focused to minimize that window.
+* Multi-window selection: click an app to focus its most recently used unminimized eligible window, or restore one window if all are minimized. Click the active app again to open its native window menu and choose a specific window.
+* Scrollwheel cycling that restores only the selected window and leaves minimized siblings alone. Hold Ctrl while scrolling to stay on the current workspace.
 * Native Ctrl-click and middle-click actions for opening a new window, right-click window menus, and custom folder launchers.
 * Click targets that follow enlarged icons beyond the dock frame, and zoom recovery when leaving after a click.
 * Updated Blur My Shell integration, live settings updates, favorite reordering, and reduced idle animation and resource use.
 
-The app activation policy follows common Mac Dock behavior; GNOME and individual applications can still differ. See the [changelog](CHANGELOG.md) for the full change list.
+These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; native app menus retain GNOME's window list and application actions. See the [changelog](CHANGELOG.md) for the full change list.
 
 ## Compatibility
 
@@ -29,7 +31,7 @@ The app activation policy follows common Mac Dock behavior; GNOME and individual
 * Animated, resizable dock icons and multi-monitor support
 * Bottom, top, left, and right dock positions
 * Autohide/intellihide and panel mode
-* Scrollwheel window cycling and Mac-style app activation
+* Scrollwheel window cycling, single-window toggling, and native window menus
 * Favorite reordering and an optional Show Apps button
 * Analog clock, dynamic calendar and Trash icons, mounted devices, and a Downloads fan
 * Top panel styling, icon tint/monochrome effects, themes, and custom icons

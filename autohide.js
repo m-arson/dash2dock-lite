@@ -230,6 +230,9 @@ export let AutoHide = class {
     // Fullscreen takes priority over pointer proximity: show() deliberately
     // refuses to reveal a dock over a fullscreen application.
     if (this.dock._monitor.inFullscreen) return true;
+    // Popup menus live outside the dock's bounds. Keep their source visible
+    // while the pointer moves into a window chooser or an app context menu.
+    if (this.dock._hasOpenMenu?.()) return false;
     let pointer = global.get_pointer();
     if (this.extension.simulated_pointer) {
       pointer = [...this.extension.simulated_pointer];

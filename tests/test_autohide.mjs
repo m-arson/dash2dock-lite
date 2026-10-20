@@ -136,4 +136,52 @@ fourth.disable();
 fifth.disable();
 assert.equal(pending.size, 0, 'all outstanding local overlap checks are cancelled on shutdown');
 assert.equal(listeners.size, 0, 'all window listeners are released on shutdown');
+
+// Native app choosers and custom menus extend beyond the dock's input bounds.
+// Their open/close signals use the existing local debounce; no extra polling
+// should be needed to preserve the menu and resume hiding after it closes.
+actors = [{get_meta_window: () => window}];
+extension.pressure_sense = false;
+const menuDock = makeAutoHide();
+let menuOpen = true;
+menuDock.dock._hasOpenMenu = () => menuOpen;
+flushChecks();
+assert.equal(menuDock.dock.shown, true, 'an open menu keeps its dock source shown despite overlapping windows');
+menuDock._onLeaveEvent();
+assert.equal(pending.size, 1, 'moving from the dock into its popup queues the usual overlap check');
+flushChecks();
+assert.equal(menuDock.dock.shown, true, 'leaving the dock into an open popup must not hide or close its source');
+assert.equal(pending.size, 0, 'keeping a menu open never schedules ongoing polling');
+
+menuDock.dock._monitor.inFullscreen = true;
+menuDock._debounceCheckHide();
+flushChecks();
+assert.equal(menuDock.dock.shown, false, 'fullscreen still hides the dock even when a menu is open');
+menuDock.dock._monitor.inFullscreen = false;
+menuDock._debounceCheckHide();
+flushChecks();
+assert.equal(menuDock.dock.shown, true, 'leaving fullscreen can reveal a dock whose menu is still open');
+
+menuOpen = false;
+menuDock._debounceCheckHide();
+flushChecks();
+assert.equal(menuDock.dock.shown, false, 'closing the menu resumes normal overlap-based autohide');
+
+extension.autohide_dodge = false;
+menuOpen = true;
+menuDock._debounceCheckHide();
+flushChecks();
+assert.equal(menuDock.dock.shown, true, 'an open popup also holds the dock in simple autohide mode');
+menuOpen = false;
+menuDock._debounceCheckHide();
+flushChecks();
+assert.equal(menuDock.dock.shown, false, 'simple autohide resumes when the popup closes outside the dock');
+menuOpen = true;
+menuDock._debounceCheckHide();
+assert.equal(pending.size, 1);
+menuDock.disable();
+assert.equal(pending.size, 0, 'disabling cancels a pending menu-state overlap check');
+menuDock._debounceCheckHide();
+assert.equal(pending.size, 0, 'a late menu close signal cannot restart checks after shutdown');
+extension.autohide_dodge = true;
 console.log('Autohide regression tests passed');

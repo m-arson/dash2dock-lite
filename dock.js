@@ -1283,14 +1283,30 @@ export let Dock = GObject.registerClass(
           c._grid.style = 'background: none !important;';
         }
         if (c._appwell && !c._appwell._activate) {
+          const onMenuStateChanged = (_menu, open) => {
+            if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+                c._d2dlDestroying) return;
+            if (open && this.autohider?._enabled) this.autohider.show();
+            this.autohider?._debounceCheckHide();
+          };
+          // AppIcon emits this for menus created lazily. Custom item menus
+          // already exist and emit PopupMenu's open-state-changed instead.
+          c._appwell.connectObject?.('menu-state-changed', onMenuStateChanged, this);
+          c._menu?.connectObject?.('open-state-changed', onMenuStateChanged, this);
           c._appwell._activate = c._appwell.activate;
           c._appwell.activate = (button) => {
+            if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+                c._d2dlDestroying || c._appwell._d2dlDestroying) return;
             try {
               if (!c._menu) {
                 this._maybeBounce(c);
               }
-              if (!c.custom_icon && this._activateAppWindow(c._appwell.app, button)) {
-                Main.overview.hide();
+              const action = !c.custom_icon &&
+                this._activateAppWindow(c._appwell.app, button, c._appwell);
+              if (action) {
+                // Shell closes an app menu when the overview starts hiding.
+                // Keep it open until the user chooses a window or action.
+                if (action !== 'chooser') Main.overview.hide();
               } else {
                 // Native activation handles launching, new-window shortcuts,
                 // and custom items such as downloads and mounted folders.
@@ -1957,8 +1973,20 @@ export let Dock = GObject.registerClass(
       });
     }
 
-    _activateAppWindow(app, button) {
-      if (this._destroyed || !this.dash || !app?.get_windows ||
+    _hasOpenMenu() {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return false;
+      const icons = this._icons ?? [
+        ...(this.dash._box?.get_children() ?? []),
+        ...(this._extraIcons?.get_children() ?? []),
+      ];
+      return icons.some(icon => !icon._d2dlDestroying && [
+        icon._menu, icon._appwell?._menu, icon._button?._menu, icon.child?._menu,
+      ].some(menu => menu?.isOpen));
+    }
+
+    _activateAppWindow(app, button, appIcon) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+          appIcon?._d2dlDestroying || !app?.get_windows ||
           app.state !== Shell.AppState.RUNNING) return false;
 
       // Leave new-window shortcuts and secondary-button handling to Shell.
@@ -1975,9 +2003,45 @@ export let Dock = GObject.registerClass(
       const windows = [...(filtered.length ? filtered : app.get_windows())];
       if (!windows.length) return false;
 
-      // A second click leaves the active window and every sibling unchanged.
-      // Do not call Shell.App.activate() afterwards: it can raise the group.
-      if (windows.some(window => window.has_focus())) return true;
+      const focused = windows.find(window => window.has_focus());
+      if (focused) {
+        if (windows.length === 1) {
+          // A window can remain focused behind the overview. Selecting its
+          // icon there means return to the window, rather than minimize it.
+          if (!Main.overview.visible) {
+            focused.minimize();
+            return true;
+          }
+          if (focused.minimized) focused.unminimize();
+          this._raiseAndFocus(focused);
+        } else if (appIcon?.popupMenu) {
+          // Use Shell's window list and activation, keyboard navigation,
+          // accessibility and menu lifetime instead of another window UI.
+          const side = {
+            [DockPosition.BOTTOM]: St.Side.BOTTOM,
+            [DockPosition.TOP]: St.Side.TOP,
+            [DockPosition.LEFT]: St.Side.LEFT,
+            [DockPosition.RIGHT]: St.Side.RIGHT,
+          }[this._position] ?? St.Side.BOTTOM;
+          // Shell 50 reads this property; older versions accept the argument.
+          appIcon._popupMenuSide = side;
+          appIcon.popupMenu(side);
+          // A right-click may already have created this menu on another
+          // side. Preserve the native pointer's requested side across flips.
+          const menu = appIcon._menu;
+          if (menu?._boxPointer) {
+            menu._arrowSide = side;
+            menu._boxPointer._userArrowSide = side;
+            menu._boxPointer.updateArrowSide?.(side);
+            menu._boxPointer.queue_relayout?.();
+          }
+          // popupMenu() returns false even when it opens successfully.
+          if (menu?.isOpen) return 'chooser';
+        }
+        // Never fall through to Shell.App.activate(), which raises siblings,
+        // even if a dummy icon or an unavailable native menu cannot open.
+        return true;
+      }
 
       // Shell normally supplies MRU order. Use explicit user times when all
       // are available, retaining that order for ties or older/missing APIs.
@@ -2138,17 +2202,18 @@ export let Dock = GObject.registerClass(
     }
 
     _cycleWindows(app, evt) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+          !app?.get_windows) return false;
       if (this._lockedCycle) {
         this._scrollCounter = 0;
         return false;
       }
 
-      let focusId = 0;
       let workspaceManager = global.workspace_manager;
       let activeWs = workspaceManager.get_active_workspace();
 
-      // let windows = app.get_windows();
-      let windows = this.getAppWindowsFiltered(app);
+      // get_windows() may return the app's own array. Keep cycle ordering local.
+      let windows = [...this.getAppWindowsFiltered(app)];
 
       if (evt.get_state() & Clutter.ModifierType.CONTROL_MASK) {
         windows = windows.filter((w) => {
@@ -2156,44 +2221,28 @@ export let Dock = GObject.registerClass(
         });
       }
 
-      let nw = windows.length;
+      const nw = windows.length;
+      if (!nw) {
+        this._scrollCounter = 0;
+        return false;
+      }
       windows.sort((w1, w2) => {
-        return w1.get_id() > w2.get_id() ? -1 : 1;
+        return w2.get_id() - w1.get_id();
       });
 
-      //! add explanations
-      if (nw > 1) {
-        for (let i = 0; i < nw; i++) {
-          if (windows[i].has_focus()) {
-            focusId = i;
-          }
-          if (windows[i].is_hidden()) {
-            windows[i].unminimize();
-            windows[i].raise();
-          }
-        }
-
-        let current_focus = focusId;
-
-        if (this._scrollCounter < -1 || this._scrollCounter > 1) {
-          // one window per step; rounding could skip back to the same one
-          focusId = (focusId + Math.sign(this._scrollCounter) + nw) % nw;
-          this._scrollCounter = 0;
-        }
-
-        if (current_focus == focusId) return;
-      } else if (nw == 1) {
-        if (windows[0].is_hidden()) {
-          windows[0].unminimize();
-          windows[0].raise();
-        }
-      }
-
-      let window = windows[focusId];
-      if (window) {
-        this._lockCycle();
-        this._raiseAndFocus(window);
-      }
+      if (this._scrollCounter >= -1 && this._scrollCounter <= 1) return false;
+      const direction = Math.sign(this._scrollCounter);
+      this._scrollCounter = 0;
+      const focused = windows.findIndex(window => window.has_focus());
+      // With no active window, start at the corresponding end of the list.
+      // Otherwise move exactly one window and wrap at either end.
+      const index = focused === -1 ? (direction > 0 ? 0 : nw - 1) :
+        (focused + direction + nw) % nw;
+      const window = windows[index];
+      if (window.minimized) window.unminimize();
+      this._lockCycle();
+      this._raiseAndFocus(window);
+      return true;
     }
   }
 );

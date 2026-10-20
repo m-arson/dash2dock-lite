@@ -246,7 +246,7 @@
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Cycle Windows</property>
-            <property name="subtitle" translatable="yes">Scroll over dock icons. Press CTRL to affect only windows in current workspace.</property>
+            <property name="subtitle" translatable="yes">Scroll to switch windows, restoring only the selected window. Hold CTRL to stay on the current workspace.</property>
             <child>
             </child>
           </object>
@@ -272,8 +272,8 @@
         </child>
         <child>
           <object class="AdwActionRow">
-            <property name="title" translatable="yes">Maximize/Minimize Windows</property>
-            <property name="subtitle" translatable="yes">Click on icon to minimze windows. Press SHIFT and click to maximize.</property>
+            <property name="title" translatable="yes">Window Actions</property>
+            <property name="subtitle" translatable="yes">Click to focus or restore a window. Click the active app again to minimize its single window, or choose from its multiple windows.</property>
             <child>
             </child>
           </object>

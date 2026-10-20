@@ -29,9 +29,11 @@ Magnified input tests match native button bounds to rendered icons at all four
 edges, with scaled parents and pivots, and verify X11 tracking, native drag
 restoration and idle stability. Pointer watch tests cover missed exits after
 click grabs, stationary hover, and cleanup on hide, cancellation and teardown.
-Window activation tests cover focused clicks, recent-window selection, restoring
-only one minimized window, monitor/workspace selection, and native launch,
-modifier and custom-icon behavior.
+Window activation tests cover single-window minimizing, the active app's native
+window chooser, recent-window selection, restoring only one minimized window,
+monitor/workspace selection, and native launch, modifier and custom-icon
+behavior. Scroll cycling checks that only the selected window is restored,
+including direction, thresholds, monitor/workspace filtering and cooldown.
 Packaging tests build modern/legacy bundles in a guarded temporary
 directory. Upgrade tests simulate installs, exact preference preservation,
 corrupted/partial-install rollback, and unsafe backup destinations entirely in
