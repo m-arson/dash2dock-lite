@@ -323,7 +323,7 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   animate(settings = {}) {
-    this.docks.forEach((dock) => {
+    (this.docks ?? []).forEach((dock) => {
       if (settings && settings.preview) {
         dock.preview();
       }
@@ -395,6 +395,12 @@ export default class Dash2DockLiteExt extends Extension {
   async _loadConfig() {
     const lifecycleId = this._lifecycleId;
     const isCurrent = () => this._enabled && lifecycleId === this._lifecycleId;
+    const configuredOpener = (config) => {
+      const value = config?.['file-explorer'];
+      return typeof value === 'string' ? value.trim() || null : null;
+    };
+    const previousOpener = configuredOpener(this._config);
+    let validOpenerConfig = false;
     this._config = {};
     let fn_config = configFile('config.json');
     if (fn_config.query_exists(null)) {
@@ -402,7 +408,12 @@ export default class Dash2DockLiteExt extends Extension {
         const contents = await loadFile(fn_config);
         if (!isCurrent()) return;
         const config = JSON.parse(contents);
-        if (config && typeof config === 'object' && !Array.isArray(config)) this._config = config;
+        if (config && typeof config === 'object' && !Array.isArray(config)) {
+          validOpenerConfig = config['file-explorer'] === undefined ||
+            typeof config['file-explorer'] === 'string';
+          if (!validOpenerConfig) delete config['file-explorer'];
+          this._config = config;
+        }
       } catch (err) {
         console.log(err);
       }
@@ -477,14 +488,17 @@ export default class Dash2DockLiteExt extends Extension {
       this._configStylesheet = fn_style;
     }
 
-    if (this.docks && this.docks.length) {
+    if (this.docks?.length && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter) {
+      const previousDocks = this.docks;
       if (this._config.docks) {
         this.createTheDocks();
-      } else {
-        this.docks.forEach((d) => {
-          d.layout();
-        });
       }
+      // Rewriting a launcher file does not update DesktopAppInfo objects
+      // already held by custom icons or their menus. New topology already
+      // uses the loaded opener; existing dashes need fresh launcher actors.
+      if (validOpenerConfig && previousOpener !== configuredOpener(this._config) &&
+          this.docks === previousDocks) this.recreateAllDocks();
+      this.animate({ refresh: true });
     }
   }
 
@@ -549,8 +563,29 @@ export default class Dash2DockLiteExt extends Extension {
           break;
         }
         case 'debug-visual':
+        case 'multi-monitor-filter':
+        case 'downloads-icon-rotate-labels':
+        case 'overview-transparent-background':
+        case 'overview-transparent-topbar-background':
           this.animate();
           break;
+        case 'animate-icons-unmute':
+          this.animate({ refresh: true });
+          break;
+        case 'hide-labels': {
+          for (const dock of this.docks ?? []) {
+            for (const icon of dock._icons ?? []) {
+              if (value) {
+                icon._label?.remove_all_transitions();
+                icon._label?.hide();
+              } else if (icon === dock._nearestIcon) {
+                icon.showLabel?.();
+              }
+            }
+          }
+          this.animate();
+          break;
+        }
         case 'mounted-icon': {
           this.services.checkMounts();
           this.services._commitMounts();
@@ -582,6 +617,12 @@ export default class Dash2DockLiteExt extends Extension {
         }
         case 'clock-style':
         case 'calendar-style':
+        case 'drawing-dark-color':
+        case 'drawing-light-color':
+        case 'drawing-accent-color':
+        case 'drawing-dark-foreground':
+        case 'drawing-light-foreground':
+        case 'drawing-secondary-color':
           this._updateWidgetStyle();
           break;
         case 'max-recent-items':
@@ -598,6 +639,7 @@ export default class Dash2DockLiteExt extends Extension {
         }
         case 'downloads-path':
           this.services.setupDownloads();
+          this._syncServiceTimer();
           break;
         // problematic settings needing animator restart
         case 'dock-location':
@@ -1005,7 +1047,7 @@ export default class Dash2DockLiteExt extends Extension {
       secondary_color: this.drawing_secondary_color,
       clock_style: this.clock_style,
     };
-    this.docks.forEach((dock) => {
+    (this.docks ?? []).forEach((dock) => {
       let widgets = [dock._clock, dock._calendar];
       widgets.forEach((w) => {
         if (w) {
@@ -1071,13 +1113,14 @@ export default class Dash2DockLiteExt extends Extension {
   }
 
   _updateAnimationFPS() {
-    this.docks.forEach((dock) => {
+    (this.docks ?? []).forEach((dock) => {
       dock.cancelAnimations();
     });
     this.animationInterval =
       ANIM_INTERVAL + (this.animation_fps || 0) * ANIM_INTERVAL_PAD;
-    this._hiTimer.shutdown();
-    this._hiTimer.initialize(this.animationInterval);
+    this._hiTimer?.shutdown();
+    this._hiTimer?.initialize(this.animationInterval);
+    if (this._enabled) this.animate();
   }
 
   _updateShrink(disable) {

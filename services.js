@@ -95,6 +95,9 @@ export const Services = class {
         // A working monitor delivers changes without polling the filesystem.
         if (!this._trashMonitor) this.checkTrash();
       }),
+      new ServiceCounter('downloads', 1000 * 15, () => {
+        if (!this._downloadsMonitor) this.checkDownloads();
+      }),
       new ServiceCounter(
         'clock',
         1000 * 60, // every minute
@@ -199,6 +202,7 @@ export const Services = class {
   _serviceEnabled(service) {
     switch (service.name) {
       case 'trash': return this.extension.trash_icon && !this._trashMonitor;
+      case 'downloads': return this.extension.downloads_icon && this._downloadsDir && !this._downloadsMonitor;
       case 'clock': return this.extension.clock_icon;
       case 'calendar': return this.extension.calendar_icon;
       default: return false;

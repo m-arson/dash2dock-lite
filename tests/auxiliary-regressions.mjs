@@ -201,6 +201,26 @@ test('blur preserves constant texture channels instead of amplifying alpha', () 
   }
 });
 
+test('tint opacity preserves premultiplied color channels on transparent textures', () => {
+  const shader = readFileSync(new URL('../effects/tint_effect.glsl', import.meta.url), 'utf8');
+  const body = shader.match(/vec4 d2da_effect\([^)]*\)\s*{([\s\S]*?)\n}/)[1]
+    .replace(/\bvec3\s+(\w+)\s*=/g, 'let $1 =');
+  // Evaluate a constant grayscale texture, where vector arithmetic reduces
+  // to scalar arithmetic. Every premultiplied RGB channel must remain <= alpha.
+  const tint = new Function('c', 'red', 'green', 'blue', 'blend', 'vec3', 'vec4', 'mix', body);
+  for (const alpha of [0, 0.1, 0.5, 1]) {
+    for (const channel of [0, alpha / 2, alpha]) {
+      for (const blend of [0, 0.25, 0.75, 1]) {
+        const result = tint({rgb: channel, a: alpha}, 1, 1, 1, blend,
+          value => value, (rgb, a) => ({rgb, a}), (a, b, amount) => a * (1 - amount) + b * amount);
+        assert.ok(result.rgb >= 0 && result.rgb <= result.a + 1e-12,
+          `tint produced RGB ${result.rgb} above alpha ${result.a}`);
+        if (blend === 0) assert.equal(result.rgb, channel * 0.85);
+      }
+    }
+  }
+});
+
 test('modern folder selection ignores late completion from a cancelled request', async () => {
   const dialogs = [];
   class File {
@@ -362,6 +382,46 @@ test('indicator snapshots detect in-place changes and avoid equal-array repaint 
   canvas.set_state({ count: 0 });
   canvas.set_state({ count: 0 });
   assert.equal(repaints, 3);
+});
+
+test('default running indicators and notification badges paint visible shapes', () => {
+  const {DotCanvas} = loadModule('apps/dot.js', 'DotCanvas', actorDependencies);
+  const {DockItemDotsOverlay, DockItemBadgeOverlay} = loadModule(
+    'dockItems.js', 'DockItemDotsOverlay, DockItemBadgeOverlay', {
+      ...actorDependencies, PopupMenu: {PopupMenu: class {}},
+      DashIcon: class {}, DashItemContainer: class {}, DockPosition: {BOTTOM: 'bottom'},
+    });
+  for (const [Overlay, expectedArcs] of [[DockItemDotsOverlay, 3], [DockItemBadgeOverlay, 1]]) {
+    const canvas = Object.create(DotCanvas.prototype);
+    Object.assign(canvas, {_padding: 8, _barHeight: 6, width: 96, state: {}});
+    canvas.set_scale = canvas.queue_repaint = () => {};
+    canvas.get_surface_size = () => [96, 96];
+    const renderer = {_canvas: canvas, set_state: state => canvas.set_state(state)};
+    const extension = {
+      running_indicator_style_options: ['default'], running_indicator_style: 0,
+      notification_badge_style_options: ['default'], notification_badge_style: 0,
+    };
+    const icon = {_icon: {width: 48}};
+    const dock = {_iconSizeScaledDown: 48, _monitor: {geometry_scale: 1}};
+    Overlay.prototype.update.call({renderer}, icon,
+      {appCount: 3, noticesCount: 3, position: 'bottom', vertical: false, extension, dock});
+    let arcs = 0;
+    let fills = 0;
+    const context = new Proxy({}, {get: (_, property) => {
+      if (property === 'arc') return () => arcs++;
+      if (property === 'fill') return () => fills++;
+      return () => {};
+    }});
+    const originalSetColor = actorDependencies.Drawing.set_color;
+    actorDependencies.Drawing.set_color = () => {};
+    try {
+      canvas._paint(context);
+    } finally {
+      actorDependencies.Drawing.set_color = originalSetColor;
+    }
+    assert.equal(arcs, expectedArcs);
+    assert.ok(fills > 0, 'default overlays must fill their visible shapes');
+  }
 });
 
 test('effect construction preserves shared parameters and supports both shader APIs', () => {

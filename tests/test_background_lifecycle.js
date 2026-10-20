@@ -308,6 +308,21 @@ try {
   services.update(15000);
   assert(trashScans === 2 && services.nextUpdateDelay() === 15000,
     'failed Trash monitoring must still refresh on its fallback deadline');
+  services.extension.trash_icon = false;
+  services.extension.downloads_icon = true;
+  services._monitorDirectory = () => null;
+  services.setupDownloads();
+  let downloadScans = 0;
+  services.checkDownloads = () => downloadScans++;
+  assert(services.nextUpdateDelay() === 15000,
+    'unmonitored Downloads must keep a slow fallback poll');
+  services.update(15000);
+  assert(downloadScans === 1 && services.nextUpdateDelay() === 15000,
+    'Downloads must refresh when monitoring is unsupported');
+  services._downloadsMonitor = new SignalSource();
+  services._downloadsMonitor.cancel = () => {};
+  assert(services.nextUpdateDelay() === null,
+    'working Downloads monitoring must not leave a polling timer');
   services.disable();
   assert(Main.messageTray.listeners.length === 0, 'service shutdown must detach notification tray listeners');
   Main.messageTray = tray;

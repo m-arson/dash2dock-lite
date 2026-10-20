@@ -48,6 +48,7 @@ class Actor {
       text_direction: 1, children: [], destroyed: false}, params);
   }
   get_children() { return [...this.children]; }
+  get_n_children() { return this.children.length; }
   get_parent() { return this.parent ?? null; }
   get_transformed_position() { return [this.x, this.y]; }
   get_transformed_size() { return [this.width, this.height]; }
@@ -102,9 +103,32 @@ const laters = {
   add: (_type, callback) => { const id = nextLater++; pending.set(id, callback); return id; },
   remove: id => pending.delete(id),
 };
+const dragMonitors = new Set();
+let nativeEmptyTargets = 0;
+class NativeDash {
+  _onItemDragBegin() {
+    this._dragCancelled = false;
+    this._dragMonitor = {};
+    dragMonitors.add(this._dragMonitor);
+    // GNOME 48's native contract counts every child, including hidden boxes.
+    if (this._box.get_n_children() === 0) {
+      nativeEmptyTargets++;
+      this._emptyDropTarget = new Actor({width: this.iconSize, height: this.iconSize});
+      this._box.insert_child_at_index(this._emptyDropTarget, 0);
+    }
+  }
+  _onItemDragCancelled() {
+    this._dragCancelled = true;
+    this._endItemDrag();
+  }
+  _onItemDragEnd() {
+    if (!this._dragCancelled) this._endItemDrag();
+  }
+}
 const mocks = {
-  DashModule: {Dash: class {}},
-  DND: {DragMotionResult: {NO_DROP: 0, MOVE_DROP: 2, CONTINUE: 3}},
+  DashModule: {Dash: NativeDash},
+  DND: {DragMotionResult: {NO_DROP: 0, MOVE_DROP: 2, CONTINUE: 3},
+    removeDragMonitor: monitor => dragMonitors.delete(monitor)},
   GObject: {registerClass: (...args) => args.at(-1)},
   St: {Widget: Actor, Bin: Actor},
   Clutter: {TextDirection: {LTR: 1, RTL: 2}, EVENT_STOP: true},
@@ -114,7 +138,8 @@ const mocks = {
   global: {settings: {is_writable: () => writable}, compositor: {get_laters: () => laters}},
   Meta: {LaterType: {BEFORE_REDRAW: 1}},
   GLib: {SOURCE_REMOVE: false},
-  Main: {overview: {dash: {showAppsButton: {checked: false}}}},
+  Main: {overview: {dash: {showAppsButton: {checked: false}}},
+    ctrlAltTabManager: {removeGroup() {}}},
   getDropSlot, planFavoriteDrop, resolveFavoriteDrop,
 };
 const [, bytes] = Gio.File.new_for_uri(import.meta.url).get_parent()
@@ -122,8 +147,8 @@ const [, bytes] = Gio.File.new_for_uri(import.meta.url).get_parent()
 const source = new TextDecoder().decode(bytes)
   .replace(/^import[\s\S]*?from\s+['"][^'"]+['"];[ \t]*$/gm, '')
   .replace(/^export /gm, '');
-const {Dock, guardBaseIcon} = new Function(...Object.keys(mocks),
-  `${source}\nreturn {Dock, guardBaseIcon};`)(...Object.values(mocks));
+const {Dock, DockDash, guardBaseIcon} = new Function(...Object.keys(mocks),
+  `${source}\nreturn {Dock, DockDash, guardBaseIcon};`)(...Object.values(mocks));
 function fixture(vertical = true) {
   favoriteIds = ['a', 'b', 'c'];
   moves = [];
@@ -149,6 +174,74 @@ function fixture(vertical = true) {
   dash._createAppItem = sourceApp => item(sourceApp.get_id(), 0, 0);
   return {dock, dash, box, running, extras};
 }
+
+function nativeDragFixture(favoritesOnly = false, keepRunning = false) {
+  const fixtureParts = fixture();
+  const {dock, box, extras, running} = fixtureParts;
+  favoriteIds = [];
+  for (const actor of box.get_children()) {
+    if (actor !== extras && !(keepRunning && actor === running)) actor.destroy();
+  }
+  extras.visible = false;
+  dock.extension = {favorites_only: favoritesOnly};
+  const dash = Object.assign(new DockDash(), fixtureParts.dash, {
+    _d2dlOwner: dock, _separator: null, _showAppsIcon: {setDragApp() {}},
+  });
+  dash._clearDragPlaceholder = () => dock._clearDashPlaceholder(dash);
+  dash._clearEmptyDropTarget = () => dock._clearEmptyDashDropTarget(dash);
+  dock.dash = dash;
+  return {...fixtureParts, dash};
+}
+for (const [favoritesOnly, keepRunning] of [[false, false], [true, true]]) {
+  const {dock, dash, box} = nativeDragFixture(favoritesOnly, keepRunning);
+  const initialNativeTargets = nativeEmptyTargets;
+  dash._onItemDragBegin();
+  const emptyTarget = dash._emptyDropTarget;
+  equal(nativeEmptyTargets, initialNativeTargets, 'native child-count check misses empty custom dock');
+  equal(!!emptyTarget && emptyTarget.visible && emptyTarget.width > 0 && emptyTarget.height > 0,
+    true, 'custom empty drop target has visible, nonzero geometry');
+  equal(box.children.includes(emptyTarget), true, 'empty target participates in native box layout');
+  equal(dragMonitors.size, 1, 'empty dock retains one native drag monitor');
+  equal(dock._handleDashDragOver(dash, {app: app('new')}, 20, 20), 2,
+    'empty drop target supports pinning a new app');
+  const placeholder = dash._dragPlaceholder;
+  dash._onItemDragCancelled();
+  equal(emptyTarget.destroyed && placeholder.destroyed && !dash._emptyDropTarget,
+    true, 'cancel destroys empty target and placeholder synchronously');
+  equal(dragMonitors.size, 0, 'cancel removes the native drag monitor');
+
+  dash._onItemDragBegin();
+  const acceptedTarget = dash._emptyDropTarget;
+  equal(dock._acceptDashDrop(dash, {app: app('new')}, 20, 20), true, 'empty dock accepts app drop');
+  dash._onItemDragEnd();
+  for (const callback of [...pending.values()]) callback();
+  equal(favoriteIds, ['new'], 'drop into empty dock pins exactly one favorite');
+  equal(acceptedTarget.destroyed && dragMonitors.size === 0, true,
+    'successful drop releases empty target and monitor');
+}
+{
+  const {dock, dash} = nativeDragFixture();
+  dock.cancelAnimations = () => {};
+  dash._onItemDragBegin();
+  const target = dash._emptyDropTarget;
+  dock._prepareDashDestroy(dash);
+  equal(target.destroyed && !dash._emptyDropTarget && dragMonitors.size === 0, true,
+    'dock teardown releases an active empty drop target and drag monitor');
+}
+{
+  const {dock, dash: fields} = fixture();
+  dock.extension = {favorites_only: false};
+  const dash = Object.assign(new DockDash(), fields, {
+    _d2dlOwner: dock, _showAppsIcon: {setDragApp() {}},
+  });
+  dock.dash = dash;
+  dash._clearDragPlaceholder = () => dock._clearDashPlaceholder(dash);
+  dash._clearEmptyDropTarget = () => dock._clearEmptyDashDropTarget(dash);
+  dash._onItemDragBegin();
+  equal(dash._emptyDropTarget ?? null, null, 'populated dock does not gain an empty drop zone');
+  dash._onItemDragEnd();
+}
+
 for (const vertical of [true, false]) {
   for (const [pointer, expected] of [[0, 0], [45, 1], [85, 2], [180, 3]]) {
     const {dock, dash} = fixture(vertical);

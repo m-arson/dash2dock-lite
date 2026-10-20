@@ -1,4 +1,5 @@
-The automated regression tests require Node.js 18 or newer and GJS. Run from
+The automated regression tests require Node.js 18 or newer, GJS, Python 3,
+Make, GLib schema tools, zip, and unzip. Run from
 the project directory:
 
 ```sh
@@ -20,6 +21,12 @@ Disabled features create no folder/volume watchers; Downloads metadata requests
 are limited to displayed rows, event bursts coalesce, unchanged results do not
 animate, and indicator canvases release when their content disappears. Shader
 checks ensure repeated paints do not write uniforms or reload source files.
+Live settings/configuration tests exercise waking settled docks and replacing
+cached folder launchers. Empty-dock drag tests use the native Dash child-count
+contract. Packaging tests build modern/legacy bundles in a guarded temporary
+directory. Upgrade tests simulate installs, exact preference preservation,
+corrupted/partial-install rollback, and unsafe backup destinations entirely in
+temporary directories; they never invoke the real extension installer.
 The lifecycle suites deliberately log injected errors to verify that timer
 callbacks and teardown continue running after a failure.
 

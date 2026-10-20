@@ -9,6 +9,12 @@
 
 # Next Release
 
+* wake settled docks for live visual settings and late configuration; restart correctly after changing FPS and refresh cached folder launchers
+* allow dragging apps into an empty dock or an empty favorites-only dock
+* restore default running dots/badges and correct tint transparency
+* refresh Downloads periodically only when filesystem monitoring is unavailable
+* include bundled themes, publish legacy archives without installing them and preserve unrelated ZIP backups
+* verify update archives and settings before installation, with automatic rollback on failed or corrupted installs
 * stop animation when hover, tooltips, autohide slides and Downloads pullouts settle; wake it again on input
 * reuse unchanged dock layout and final bounds, avoid forced offscreen buffers and allocate indicator canvases only when needed
 * use notification signals and service deadlines instead of idle polling; detach disabled folder/volume watchers and suspend services while locked

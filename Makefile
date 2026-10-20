@@ -1,6 +1,6 @@
 all: build install lint
 
-.PHONY: build install
+.PHONY: all build install clean publish install-zip legacy-build g44 publish-g44
 
 build:
 	glib-compile-schemas --strict --targetdir=schemas/ schemas
@@ -34,7 +34,8 @@ publish:
 	cp -R apps ./build
 	cp -R preferences ./build
 	cp -R effects ./build
-	rm -rf ./*.zip
+	cp -R themes ./build
+	rm -f ./dash2dock-lite@icedman.github.com.zip
 	rm -rf build/schemas/gschemas.compiled
 	rm -rf build/*_.js
 	rm -rf build/imports*.js
@@ -44,9 +45,7 @@ publish:
 
 install-zip:
 	echo "installing zip..."
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com
-	mkdir -p ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	unzip -q dash2dock-lite@icedman.github.com.zip -d ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
+	gnome-extensions install --force dash2dock-lite@icedman.github.com.zip
 
 test-prefs:
 	gnome-extensions prefs dash2dock-lite@icedman.github.com
@@ -65,15 +64,13 @@ test-shell2: install
 		dbus-run-session -- gnome-shell --devkit --wayland
 	rm /run/user/1000/gnome-shell-disable-extensions
 
-g44: build
+legacy-build: build
 	rm -rf ./build
 	mkdir -p ./build
 	mkdir -p ./build/apps
 	mkdir -p ./build/effects
 	mkdir -p ./build/preferences
 	python3 ./tools/transpile.py
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	mkdir -p ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
 	cp -R ./schemas ./build
 	cp -R ./themes ./build
 	cp -R ./ui ./build
@@ -85,10 +82,15 @@ g44: build
 	cp ./CHANGELOG* ./build
 	cp ./README* ./build
 	cp ./stylesheet.css ./build
+
+g44: legacy-build
+	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
+	mkdir -p ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
 	cp -r ./build/* ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
 
-publish-g44: g44
+publish-g44: legacy-build
 	echo "publishing..."
+	rm -f ./dash2dock-lite@icedman.github.com.zip
 	cd build ; \
 	zip -qr ../dash2dock-lite@icedman.github.com.zip .
 

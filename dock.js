@@ -92,6 +92,7 @@ const DockDash = GObject.registerClass(
       if (this._d2dlDestroying) return;
       if (this._dragMonitor) this._endItemDrag();
       super._onItemDragBegin();
+      this._d2dlOwner?._ensureEmptyDashDropTarget(this);
       this._d2dlOwner?._setDragState(true);
     }
 
@@ -613,11 +614,7 @@ export let Dock = GObject.registerClass(
       // Reuse a placeholder as it moves and remove it synchronously. Stock
       // Dash animates old placeholders out, blocking subsequent positions.
       dash._clearDragPlaceholder = () => this._clearDashPlaceholder(dash);
-      dash._clearEmptyDropTarget = () => {
-        const target = dash._emptyDropTarget;
-        dash._emptyDropTarget = null;
-        target?.destroy();
-      };
+      dash._clearEmptyDropTarget = () => this._clearEmptyDashDropTarget(dash);
       dash.connect('destroy', () => this._prepareDashDestroy(dash));
 
       this.dash = dash;
@@ -771,6 +768,32 @@ export let Dock = GObject.registerClass(
       dash._dragPlaceholderPos = -1;
       dash._d2dlDropSource = null;
       placeholder?.destroy();
+    }
+
+    _ensureEmptyDashDropTarget(dash) {
+      if (dash._emptyDropTarget) return;
+      const favorites = new Set(Fav.getAppFavorites().getFavorites().map(app => app.get_id()));
+      const hasApplications = dash._box.get_children().some(item =>
+        isDashAppItem(item) && item.visible && !item.animatingOut &&
+        (!this.extension.favorites_only || favorites.has(item.child._delegate.app.get_id()))
+      );
+      const hasExtras = this._extraIcons?.visible &&
+        this._extraIcons.get_children().some(item => isDashAppItem(item) && item.visible);
+      if (hasApplications || hasExtras) return;
+
+      // The stock Dash checks child count, but our always-present extras box
+      // prevents its empty target even when every application is hidden.
+      const target = new St.Bin({ style_class: 'empty-dash-drop-target', reactive: false });
+      const size = Math.max(1, (this._iconSizeScaledDown || dash.iconSize) * (this._scaleFactor || 1));
+      target.set_size(size, size);
+      dash._emptyDropTarget = target;
+      dash._box.insert_child_at_index(target, 0);
+    }
+
+    _clearEmptyDashDropTarget(dash) {
+      const target = dash._emptyDropTarget;
+      dash._emptyDropTarget = null;
+      target?.destroy();
     }
 
     _positionDashPlaceholder(dash) {

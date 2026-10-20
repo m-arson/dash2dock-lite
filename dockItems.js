@@ -143,12 +143,15 @@ export const DockItemDotsOverlay = GObject.registerClass(
 
       let options = extension.running_indicator_style_options;
       let running_indicator_style = options[extension.running_indicator_style];
+      if (!running_indicator_style || running_indicator_style === 'default') {
+        running_indicator_style = 'dots';
+      }
       let running_indicator_color = extension.running_indicator_color;
 
       renderer.set_state({
         count: appCount,
         color: running_indicator_color || [1, 1, 1, 1],
-        style: running_indicator_style || 'default',
+        style: running_indicator_style,
         size: extension.running_indicator_size || 0,
         rotate: vertical
           ? position == DockPosition.RIGHT
@@ -177,6 +180,9 @@ export const DockItemBadgeOverlay = GObject.registerClass(
       let options = extension.notification_badge_style_options;
       let notification_badge_style =
         options[extension.notification_badge_style];
+      if (!notification_badge_style || notification_badge_style === 'default') {
+        notification_badge_style = 'dot';
+      }
       let notification_badge_color = extension.notification_badge_color;
 
       renderer.translation_x = renderer.width / 1.5;
@@ -185,7 +191,7 @@ export const DockItemBadgeOverlay = GObject.registerClass(
       renderer.set_state({
         count: noticesCount,
         color: notification_badge_color || [1, 1, 1, 1],
-        style: notification_badge_style || 'default',
+        style: notification_badge_style,
         size: extension.notification_badge_size || 0,
         translate: [0, -0.85],
       });
