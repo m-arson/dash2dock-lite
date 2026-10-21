@@ -254,7 +254,12 @@ export let AutoHide = class {
 
     // console.log("checking pointer location...");
 
-    if (this.dock._isWithinDash(pointer) || isInRect(arect, pointer)) {
+    // The visible footprint keeps a shown dock open; it must not reveal a
+    // hidden dock. Animation checks continue while sliding/zooming settles,
+    // and the struts still describe the old on-screen area during that time.
+    // Hidden pointer reveals belong to the narrow edge dwell/pressure actor.
+    if (!this.dock._hidden &&
+        (this.dock._isWithinDash(pointer) || isInRect(arect, pointer))) {
       return false;
     }
 

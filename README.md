@@ -8,8 +8,9 @@ An animated desktop dock for GNOME Shell 46–51, based on [icedman's Dash2Dock 
 
 ## Current Version
 
-Version **104** includes:
+Version **105** includes:
 
+* Reliable edge reveal after autohiding: moving into the dock's former on-screen area during the hide animation no longer opens it before you reach the screen edge.
 * Single-window toggling: click an app to focus or restore its window, then click it again while focused to minimize that window.
 * Multi-window selection: click an app to focus its most recently used unminimized eligible window, or restore one window if all are minimized. Click the active app again to open its native window menu and choose a specific window.
 * Scrollwheel cycling that restores only the selected window and leaves minimized siblings alone. Hold Ctrl while scrolling to stay on the current workspace.

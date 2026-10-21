@@ -34,6 +34,10 @@ window chooser, recent-window selection, restoring only one minimized window,
 monitor/workspace selection, and native launch, modifier and custom-icon
 behavior. Scroll cycling checks that only the selected window is restored,
 including direction, thresholds, monitor/workspace filtering and cooldown.
+Hidden-reveal tests use real rectangle containment to check that repeated
+animation-era overlap checks cannot reopen a hidden dock within its old
+footprint, while edge, pressure, menu, overview and window-dodge behavior remain
+available at all four edges and on offset/scaled monitors.
 Packaging tests build modern/legacy bundles in a guarded temporary
 directory. Upgrade tests simulate installs, exact preference preservation,
 corrupted/partial-install rollback, and unsafe backup destinations entirely in

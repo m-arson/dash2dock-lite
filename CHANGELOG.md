@@ -9,6 +9,7 @@
 
 # Next Release
 
+* ignore the old dock footprint while hidden so returning near the dock during its hide animation cannot reveal it away from the screen edge
 * toggle a single app window between focused and minimized; click an active app with multiple eligible windows to open its native window menu
 * restore only the selected window when scrolling through app windows; keep other minimized windows unchanged and preserve the app's window order
 * activate an app's most recent unminimized eligible window on a normal Dock click; restore only one when all are minimized
