@@ -17,8 +17,42 @@ const Main = {
   layoutManager: {monitors: [{index: 0}, {index: 1}]},
   overview: {visible: false, hide() { overviewHides++; this.visible = false; }},
 };
+// A small popup boundary fake keeps these tests focused on dock ownership and
+// window selection. The actual thumbnail actors and popup lifecycle have their
+// own component regression suite.
+class WindowPreviewMenu {
+  constructor(appIcon, options) {
+    if (appIcon._previewOptions.previewThrows) throw new Error('Preview unavailable');
+    this.appIcon = appIcon;
+    this.options = options;
+    this.side = options.side;
+    this.isOpen = false;
+    this.destroyed = false;
+    appIcon._previewInstances.push(this);
+  }
+  popup(side) {
+    this.appIcon._testCalls.push(['preview', side]);
+    this.side = side;
+    if (this.isOpen) {
+      this.close();
+      return false;
+    }
+    if (this.appIcon._previewOptions.previewOpens === false) return false;
+    this.isOpen = true;
+    this.options.onOpenStateChanged(true);
+    return true;
+  }
+  setSide(side) { this.side = side; }
+  close() {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    this.options.onOpenStateChanged(false);
+  }
+  destroy() { this.close(); this.destroyed = true; }
+  select(window) { this.close(); this.options.onActivate(window); }
+}
 const dependencies = {
-  Main, Shell, Clutter, DashModule: {Dash: class {}},
+  Main, Shell, Clutter, WindowPreviewMenu, DashModule: {Dash: class {}},
   GObject: {registerClass: (...args) => args.at(-1)},
   St: {Widget: class {}, Side: {BOTTOM: 'bottom', TOP: 'top', LEFT: 'left', RIGHT: 'right'}},
   Config: {PACKAGE_VERSION: '48'},
@@ -42,6 +76,7 @@ function fixture(specs, options = {}) {
   const menuCallbacks = new Map();
   const autohideCalls = [];
   const windows = [];
+  let showingDesktop = options.showDesktop ?? false;
   const focus = window => windows.forEach(w => { w.focused = w === window; });
   const workspaces = [0, 1].map(id => ({
     id,
@@ -61,13 +96,25 @@ function fixture(specs, options = {}) {
       get_monitor() { return this.monitor; },
       get_workspace() { return workspaces[this.workspace]; },
       get_user_time() { return this.time; },
-      is_hidden() { return this.minimized || this.get_workspace() !== activeWorkspace; },
+      is_hidden() { return showingDesktop || this.minimized || this.get_workspace() !== activeWorkspace; },
       unminimize() { calls.push(['restore', this.id]); this.minimized = false; },
       minimize() { calls.push(['minimize', this.id]); this.minimized = true; this.focused = false; },
       maximize() { calls.push(['maximize', this.id]); },
       unmaximize() { calls.push(['unmaximize', this.id]); },
       raise() { calls.push(['raise', this.id]); },
       focus(time) { calls.push(['focus', this.id, time]); focus(this); },
+      activate(time) {
+        calls.push(['activate', this.id, time]);
+        if (showingDesktop) {
+          showingDesktop = false;
+          // Mutter leaves Show Desktop through native activation and retains
+          // other windows as minimized, rather than exposing the app group.
+          windows.forEach(window => { if (window !== this) window.minimized = true; });
+        }
+        this.minimized = false;
+        this.raise();
+        this.focus(time);
+      },
     };
     if (spec.noUserTime) delete window.get_user_time;
     windows.push(window);
@@ -79,6 +126,9 @@ function fixture(specs, options = {}) {
   };
   const appwell = {
     app,
+    _previewOptions: options,
+    _previewInstances: [],
+    _testCalls: calls,
     connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
     popupMenu(side) {
       calls.push(['popup', side]);
@@ -104,7 +154,7 @@ function fixture(specs, options = {}) {
     },
   };
   if (options.menuMissing) delete appwell.popupMenu;
-  const icon = {_icon: {}, _appwell: appwell, custom_icon: options.custom};
+  const icon = {_icon: {}, _appwell: appwell, child: appwell, custom_icon: options.custom};
   if (options.customMenu) {
     icon._menu = {isOpen: false,
       connectObject(signal, callback) { menuCallbacks.set(signal, callback); }};
@@ -129,6 +179,7 @@ function fixture(specs, options = {}) {
   dock._findIcons();
   return {
     dock, windows, calls, appwell, workspaces, icon, menuCallbacks, autohideCalls,
+    isShowingDesktop: () => showingDesktop,
     click(button = Clutter.BUTTON_PRIMARY, modifiers = 0) {
       currentEvent = modifiers ? {get_state: () => modifiers} : null;
       appwell.activate(button);
@@ -144,6 +195,7 @@ function ids(fixture, action) {
 }
 function assertSingleActivation(fixture, id, restored = []) {
   assert.deepEqual(ids(fixture, 'native'), [], 'normal click never activates the app group');
+  assert.deepEqual(ids(fixture, 'activate'), [id], 'exactly the chosen window receives native activation');
   assert.deepEqual(ids(fixture, 'focus'), [id], 'exactly the chosen window gains focus');
   assert.deepEqual(ids(fixture, 'raise'), [id], 'exactly the chosen window is raised');
   assert.deepEqual(ids(fixture, 'restore'), restored, 'only the selected minimized window is restored');
@@ -172,13 +224,28 @@ const focused = fixture([
   {id: 'other', time: 20, minimized: true},
 ]);
 focused.click();
-focused.click(1, Clutter.ModifierType.SHIFT_MASK);
-assert.deepEqual(focused.calls, [['popup', 'bottom'], ['popup', 'bottom']],
-  'clicking an active app with multiple windows opens the native window chooser');
-assert.equal(focused.appwell._menu.isOpen, true,
-  'popupMenu false return still counts as an open chooser');
+assert.deepEqual(focused.calls, [['preview', 'bottom']],
+  'clicking an active app with multiple windows opens the thumbnail chooser');
+assert.equal(focused.appwell._windowPreviewMenu.isOpen, true);
+assert.equal(focused.appwell._menu, undefined, 'thumbnail selection does not create a native app menu');
 assert.equal(overviewHides, 0, 'opening the chooser must not hide the overview and close it');
 assert.equal(focused.windows[1].minimized, true, 'opening a chooser does not restore its rows');
+assert.deepEqual(focused.appwell._windowPreviewMenu.options.getWindows(), focused.windows,
+  'the component receives the live application window list');
+focused.appwell._windowPreviewMenu.select(focused.windows[1]);
+assertSingleActivation(focused, 'other', ['other']);
+assert.equal(focused.appwell._windowPreviewMenu.isOpen, false);
+
+const reusedPreview = fixture([{focused: true}, {}]);
+assert.equal(reusedPreview.appwell._previewInstances.length, 0, 'previews are constructed lazily');
+reusedPreview.click();
+reusedPreview.click(1, Clutter.ModifierType.SHIFT_MASK);
+assert.equal(reusedPreview.appwell._windowPreviewMenu.isOpen, false,
+  'a second click dismisses the thumbnail chooser');
+assert.deepEqual(ids(reusedPreview, 'popup'), [], 'dismissing previews does not open the native title list');
+reusedPreview.click();
+assert.equal(reusedPreview.appwell._previewInstances.length, 1, 'reopening reuses its owned popup');
+assert.equal(reusedPreview.appwell._windowPreviewMenu.isOpen, true);
 
 const single = fixture([{id: 'only', focused: true}]);
 single.click();
@@ -188,6 +255,39 @@ single.calls.length = 0;
 overviewHides = 0;
 single.click();
 assertSingleActivation(single, 'only', ['only']);
+
+const hiddenFocusedSingle = fixture([{id: 'only', focused: true, minimized: true}]);
+hiddenFocusedSingle.click();
+assertSingleActivation(hiddenFocusedSingle, 'only', ['only']);
+
+const hiddenFocusedGroup = fixture([
+  {id: 'previously-focused', focused: true, minimized: true, time: 5},
+  {id: 'recent-hidden', minimized: true, time: 20},
+]);
+hiddenFocusedGroup.click();
+assertSingleActivation(hiddenFocusedGroup, 'recent-hidden', ['recent-hidden']);
+assert.deepEqual(ids(hiddenFocusedGroup, 'preview'), [],
+  'a minimized window with stale focus never opens a chooser instead of restoring');
+assert.equal(hiddenFocusedGroup.windows[0].minimized, true,
+  'restoring after desktop hiding leaves other minimized windows alone');
+
+const desktopSingle = fixture([{id: 'only', focused: true}], {showDesktop: true});
+desktopSingle.click();
+assertSingleActivation(desktopSingle, 'only');
+assert.equal(desktopSingle.isShowingDesktop(), false,
+  'native window activation exits Show Desktop even when the window is not minimized');
+
+const desktopGroup = fixture([
+  {id: 'stale-focused', focused: true, time: 5},
+  {id: 'selected', time: 20},
+], {showDesktop: true});
+desktopGroup.click();
+assertSingleActivation(desktopGroup, 'selected');
+assert.deepEqual(ids(desktopGroup, 'preview'), [],
+  'a window hidden by Show Desktop does not count as an active app chooser trigger');
+assert.equal(desktopGroup.isShowingDesktop(), false);
+assert.equal(desktopGroup.windows[0].minimized, true,
+  'native activation preserves the other window as minimized after Show Desktop');
 
 const overviewSingle = fixture([{id: 'only', focused: true}], {overviewVisible: true});
 overviewSingle.click();
@@ -200,24 +300,50 @@ const overviewChooser = fixture([
 overviewChooser.click();
 assert.equal(overviewHides, 0);
 assert.equal(Main.overview.visible, true, 'an overview chooser remains visible until selection');
-assert.deepEqual(overviewChooser.calls, [['popup', 'bottom']]);
+assert.deepEqual(overviewChooser.calls, [['preview', 'bottom']]);
+overviewChooser.appwell._windowPreviewMenu.select(overviewChooser.windows[1]);
+assertSingleActivation(overviewChooser, 'minimized', ['minimized']);
+assert.equal(Main.overview.visible, false, 'choosing a preview exits the overview');
 
 for (const position of ['bottom', 'top', 'left', 'right']) {
   const positioned = fixture([{focused: true}, {}], {position});
+  positioned.click();
+  assert.deepEqual(positioned.calls, [['preview', position]], 'thumbnail popup uses the dock edge');
+  assert.equal(positioned.appwell._windowPreviewMenu.side, position);
+
+  const fallback = fixture([{focused: true}, {}], {position, previewOpens: false});
   const pointerCalls = [];
-  positioned.appwell._menu = {isOpen: false, _boxPointer: {
+  fallback.appwell._menu = {isOpen: false, _boxPointer: {
     updateArrowSide: side => pointerCalls.push(['side', side]),
     queue_relayout: () => pointerCalls.push(['layout']),
   }};
-  positioned.click();
-  assert.deepEqual(positioned.calls, [['popup', position]], 'popup uses the dock edge');
-  assert.equal(positioned.appwell._popupMenuSide, position, 'Shell 50 receives its side property');
-  assert.equal(positioned.appwell._menu._boxPointer._userArrowSide, position,
-    'an existing native pointer keeps its requested side after allocation flips');
+  fallback.click();
+  assert.deepEqual(ids(fallback, 'popup'), [position], 'native fallback also uses the dock edge');
+  assert.equal(fallback.appwell._popupMenuSide, position, 'Shell 50 receives the fallback side property');
+  assert.equal(fallback.appwell._menu._boxPointer._userArrowSide, position,
+    'an existing native pointer retains its requested side after allocation flips');
   assert.deepEqual(pointerCalls, [['side', position], ['layout']]);
 }
 
 for (const options of [{menuMissing: true}, {menuOpens: false}]) {
+  const independentPreview = fixture([{focused: true}, {minimized: true}], options);
+  independentPreview.click();
+  assert.equal(independentPreview.appwell._windowPreviewMenu.isOpen, true,
+    'thumbnails do not depend on the native menu opening');
+  assert.deepEqual(ids(independentPreview, 'popup'), []);
+}
+for (const options of [{previewOpens: false}, {previewThrows: true}]) {
+  const nativeFallback = fixture([{focused: true}, {minimized: true}], options);
+  nativeFallback.click();
+  assert.equal(nativeFallback.appwell._menu.isOpen, true,
+    'unavailable thumbnails retain the native title-list fallback');
+  assert.deepEqual(ids(nativeFallback, 'popup'), ['bottom']);
+  assert.deepEqual(ids(nativeFallback, 'native'), [], 'fallback never activates the app group');
+  assert.deepEqual(ids(nativeFallback, 'restore'), [], 'fallback does not restore siblings');
+  assert.equal(overviewHides, 0, 'an open native fallback also preserves the overview');
+}
+for (const options of [{menuMissing: true}, {menuOpens: false}]) {
+  options.previewOpens = false;
   const unavailableChooser = fixture([{focused: true}, {minimized: true}], options);
   unavailableChooser.click();
   assert.deepEqual(ids(unavailableChooser, 'native'), [], 'unavailable chooser never activates the group');
@@ -295,10 +421,12 @@ const custom = fixture([{id: 'browser', focused: true}], {custom: true});
 custom.click();
 assert.deepEqual(custom.calls, [['native', 1], ['custom-launch']],
   'a folder/custom launcher runs its action even if its backing app already has windows');
+assert.equal(custom.appwell._previewInstances.length, 0, 'custom launchers never construct window previews');
 const secondary = fixture([{id: 'window'}]);
 secondary.click(Clutter.BUTTON_SECONDARY);
 assert.equal(ids(secondary, 'native').length, 1, 'secondary button stays on the native menu path');
 assert.deepEqual(ids(secondary, 'focus'), []);
+assert.equal(secondary.appwell._previewInstances.length, 0, 'right click preserves the native app menu');
 
 const destroyed = fixture([{id: 'window'}]);
 destroyed.dock._destroyed = true;
@@ -313,6 +441,61 @@ for (const destroyTarget of ['dash', 'icon', 'appwell']) {
   tearingDown.click();
   assert.deepEqual(tearingDown.calls, [], `${destroyTarget} teardown cannot activate native or dock windows`);
 }
+
+const previewState = fixture([{focused: true}, {minimized: true}]);
+previewState.click();
+const ownedPreview = previewState.appwell._windowPreviewMenu;
+assert.deepEqual(previewState.autohideCalls, ['show', 'check'],
+  'opening previews shows the source dock and defers autohide');
+assert.equal(previewState.dock._hasOpenMenu(), true);
+previewState.dock._icons = null;
+assert.equal(previewState.dock._hasOpenMenu(), true,
+  'thumbnail menus still protect autohide while the icon list is invalidated');
+ownedPreview.close();
+assert.deepEqual(previewState.autohideCalls, ['show', 'check', 'check']);
+assert.equal(previewState.dock._hasOpenMenu(), false);
+previewState.click();
+const previewNativeStateChanged = previewState.menuCallbacks.get('menu-state-changed');
+previewNativeStateChanged(previewState.appwell, true);
+assert.equal(ownedPreview.isOpen, false, 'opening the native context menu dismisses thumbnails');
+
+const detachedWindow = fixture([{id: 'active', focused: true}, {id: 'gone', minimized: true}]);
+detachedWindow.click();
+const gone = detachedWindow.windows.pop();
+detachedWindow.appwell._windowPreviewMenu.select(gone);
+assert.deepEqual(ids(detachedWindow, 'restore'), [], 'a window removed after preview opening is not restored');
+assert.deepEqual(ids(detachedWindow, 'focus'), [], 'a stale preview cannot focus a departed window');
+assert.equal(overviewHides, 0, 'a stale preview leaves the current overview alone');
+
+for (const destroyTarget of ['dock', 'dash', 'appwell']) {
+  const stalePreview = fixture([{focused: true}, {minimized: true}]);
+  stalePreview.click();
+  const popup = stalePreview.appwell._windowPreviewMenu;
+  if (destroyTarget === 'dock') stalePreview.dock._destroyed = true;
+  else (destroyTarget === 'dash' ? stalePreview.dock.dash : stalePreview.appwell)._d2dlDestroying = true;
+  popup.options.onActivate(stalePreview.windows[1]);
+  assert.deepEqual(ids(stalePreview, 'restore'), [], `${destroyTarget} teardown ignores pending preview selection`);
+  assert.deepEqual(ids(stalePreview, 'focus'), []);
+  const previousAutohide = [...stalePreview.autohideCalls];
+  popup.options.onOpenStateChanged(true);
+  assert.deepEqual(stalePreview.autohideCalls, previousAutohide,
+    `${destroyTarget} teardown ignores pending preview state changes`);
+}
+
+const cleanupPreview = fixture([{focused: true}, {minimized: true}]);
+cleanupPreview.click();
+const removedPopup = cleanupPreview.appwell._windowPreviewMenu;
+cleanupPreview.dock._cleanupIcon(cleanupPreview.icon);
+assert.equal(removedPopup.destroyed, true, 'icon cleanup destroys its owned thumbnail popup');
+assert.equal(cleanupPreview.appwell._windowPreviewMenu, null, 'icon cleanup clears popup ownership');
+assert.equal(cleanupPreview.dock._hasOpenMenu(), false);
+const cleanupAutohide = [...cleanupPreview.autohideCalls];
+removedPopup.options.onActivate(cleanupPreview.windows[1]);
+removedPopup.options.onOpenStateChanged(true);
+assert.deepEqual(ids(cleanupPreview, 'restore'), [], 'destroyed popup callbacks cannot restore a window');
+assert.deepEqual(ids(cleanupPreview, 'focus'), []);
+assert.deepEqual(cleanupPreview.autohideCalls, cleanupAutohide,
+  'destroyed popup callbacks cannot revive dock autohide activity');
 
 const menuState = fixture([{focused: true}, {}]);
 const nativeStateChanged = menuState.menuCallbacks.get('menu-state-changed');
@@ -355,6 +538,7 @@ assert.equal(cycle.scroll(), true);
 assert.deepEqual(ids(cycle, 'restore'), ['next'], 'scroll restores only the selected next window');
 assert.deepEqual(ids(cycle, 'raise'), ['next']);
 assert.deepEqual(ids(cycle, 'focus'), ['next']);
+assert.deepEqual(ids(cycle, 'activate'), ['next'], 'scroll selects through native window activation');
 assert.deepEqual(ids(cycle, 'native'), []);
 assert.deepEqual(cycle.windows.map(window => window.id), ['last', 'next', 'active'],
   'cycle sorting never changes the application window array');
@@ -369,6 +553,16 @@ cycle.calls.length = 0;
 assert.equal(cycle.scroll(-2), true);
 assert.deepEqual(ids(cycle, 'focus'), ['active'], 'negative scrolling moves in the opposite direction');
 assert.deepEqual(ids(cycle, 'restore'), []);
+
+const desktopCycle = fixture([
+  {id: 'stale-focus', cycleId: 2, focused: true},
+  {id: 'older', cycleId: 1},
+], {showDesktop: true});
+desktopCycle.scroll();
+assert.deepEqual(ids(desktopCycle, 'activate'), ['stale-focus'],
+  'scrolling from Show Desktop selects as an inactive app instead of cycling from stale focus');
+assert.equal(desktopCycle.isShowingDesktop(), false);
+assert.equal(desktopCycle.windows[1].minimized, true);
 
 const wrappingCycle = fixture([
   {id: 'start', cycleId: 1, focused: true},
@@ -436,4 +630,4 @@ destroyingCycle.dock.dash._d2dlDestroying = true;
 assert.equal(destroyingCycle.scroll(), false);
 assert.deepEqual(destroyingCycle.calls, [], 'dash teardown cannot cycle or restore windows');
 
-console.log('Window activation regressions passed (toggle, chooser, autohide signals, overview, MRU, filtered single-window cycling, teardown, native shortcuts)');
+console.log('Window activation regressions passed (toggle, thumbnail selection, popup ownership, autohide signals, overview, Show Desktop, MRU, filtered single-window cycling, teardown, native shortcuts)');

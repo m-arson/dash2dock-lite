@@ -23,6 +23,7 @@ import { MonochromeEffect } from './effects/monochrome_effect.js';
 
 import { DockIcon, DockItemContainer, DockBackground } from './dockItems.js';
 import { DockItemList } from './dockItemMenu.js';
+import { WindowPreviewMenu } from './windowPreviewMenu.js';
 import { AutoHide } from './autohide.js';
 import { Animator } from './animator.js';
 import { getDropSlot, planFavoriteDrop, resolveFavoriteDrop } from './dragOrder.js';
@@ -1136,7 +1137,10 @@ export let Dock = GObject.registerClass(
       // Menus are parented in Main.uiGroup, so destroying an item does not
       // destroy its popup actor. Detach managers before removing that actor,
       // and clear both references when custom items share the same menu.
-      const appwell = c.child;
+      const appwell = c._appwell ?? c.child;
+      const preview = appwell?._windowPreviewMenu;
+      if (appwell) appwell._windowPreviewMenu = null;
+      preview?.destroy();
       const menus = new Set([c._menu, appwell?._menu].filter(Boolean));
       c._menu = null;
       if (appwell) appwell._menu = null;
@@ -1286,6 +1290,7 @@ export let Dock = GObject.registerClass(
           const onMenuStateChanged = (_menu, open) => {
             if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
                 c._d2dlDestroying) return;
+            if (open) c._appwell?._windowPreviewMenu?.close();
             if (open && this.autohider?._enabled) this.autohider.show();
             this.autohider?._debounceCheckHide();
           };
@@ -1980,8 +1985,48 @@ export let Dock = GObject.registerClass(
         ...(this._extraIcons?.get_children() ?? []),
       ];
       return icons.some(icon => !icon._d2dlDestroying && [
-        icon._menu, icon._appwell?._menu, icon._button?._menu, icon.child?._menu,
-      ].some(menu => menu?.isOpen));
+        icon, icon._appwell, icon._button, icon.child,
+      ].some(actor => actor?._menu?.isOpen || actor?._windowPreviewMenu?.isOpen));
+    }
+
+    _openWindowPreviewMenu(appIcon, side) {
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+          !appIcon || appIcon._d2dlDestroying || !appIcon.app?.get_windows) return false;
+      let menu = appIcon._windowPreviewMenu;
+      const isCurrent = () => !this._destroyed && this.dash &&
+        !this.dash._d2dlDestroying && !appIcon._d2dlDestroying &&
+        appIcon._windowPreviewMenu === menu;
+      try {
+        if (!menu) {
+          menu = new WindowPreviewMenu(appIcon, {
+            side,
+            // Match the app-wide window list of Shell's native app menu.
+            getWindows: () => isCurrent() ? appIcon.app.get_windows() : [],
+            onActivate: window => {
+              if (!isCurrent() || !appIcon.app.get_windows().includes(window)) return;
+              if (window.minimized) window.unminimize();
+              this._raiseAndFocus(window);
+              Main.overview.hide();
+            },
+            onOpenStateChanged: open => {
+              if (!isCurrent()) return;
+              if (open && this.autohider?._enabled) this.autohider.show();
+              this.autohider?._debounceCheckHide();
+            },
+          });
+          appIcon._windowPreviewMenu = menu;
+        }
+        const wasOpen = menu.isOpen;
+        menu.popup(side);
+        // Clicking an open chooser dismisses it; that is a handled action,
+        // rather than a reason to fall back to the title-only app menu.
+        return wasOpen || menu.isOpen;
+      } catch (err) {
+        appIcon._windowPreviewMenu = null;
+        try { menu?.destroy(); } catch {}
+        console.error('Window previews:', err);
+        return false;
+      }
     }
 
     _activateAppWindow(app, button, appIcon) {
@@ -2003,7 +2048,10 @@ export let Dock = GObject.registerClass(
       const windows = [...(filtered.length ? filtered : app.get_windows())];
       if (!windows.length) return false;
 
-      const focused = windows.find(window => window.has_focus());
+      // Show Desktop and minimization can leave focus notifications pending.
+      // Only a visible, nonminimized window can be toggled or open a chooser.
+      const focused = windows.find(window => !window.minimized &&
+        !window.is_hidden?.() && window.has_focus());
       if (focused) {
         if (windows.length === 1) {
           // A window can remain focused behind the overview. Selecting its
@@ -2014,15 +2062,16 @@ export let Dock = GObject.registerClass(
           }
           if (focused.minimized) focused.unminimize();
           this._raiseAndFocus(focused);
-        } else if (appIcon?.popupMenu) {
-          // Use Shell's window list and activation, keyboard navigation,
-          // accessibility and menu lifetime instead of another window UI.
+        } else if (appIcon) {
           const side = {
             [DockPosition.BOTTOM]: St.Side.BOTTOM,
             [DockPosition.TOP]: St.Side.TOP,
             [DockPosition.LEFT]: St.Side.LEFT,
             [DockPosition.RIGHT]: St.Side.RIGHT,
           }[this._position] ?? St.Side.BOTTOM;
+          if (this._openWindowPreviewMenu(appIcon, side)) return 'chooser';
+          // Keep the native window list usable if previews cannot be opened.
+          if (!appIcon.popupMenu) return true;
           // Shell 50 reads this property; older versions accept the argument.
           appIcon._popupMenuSide = side;
           appIcon.popupMenu(side);
@@ -2194,8 +2243,9 @@ export let Dock = GObject.registerClass(
       if (!workspace) return;
       const time = global.get_current_time();
       if (activeWs == workspace) {
-        w.raise();
-        w.focus(time);
+        // Mutter activation leaves Show Desktop and restores the selected
+        // window and its transient parents. Raising/focusing alone does not.
+        w.activate(time);
       } else {
         workspace.activate_with_focus(w, time);
       }
@@ -2233,7 +2283,8 @@ export let Dock = GObject.registerClass(
       if (this._scrollCounter >= -1 && this._scrollCounter <= 1) return false;
       const direction = Math.sign(this._scrollCounter);
       this._scrollCounter = 0;
-      const focused = windows.findIndex(window => window.has_focus());
+      const focused = windows.findIndex(window => !window.minimized &&
+        !window.is_hidden?.() && window.has_focus());
       // With no active window, start at the corresponding end of the list.
       // Otherwise move exactly one window and wrap at either end.
       const index = focused === -1 ? (direction > 0 ? 0 : nw - 1) :

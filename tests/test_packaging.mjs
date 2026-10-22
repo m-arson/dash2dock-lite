@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {closeSync, cpSync, mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join, posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const source = fileURLToPath(new URL('..', import.meta.url));
@@ -85,14 +85,23 @@ os.execv('/usr/bin/' + command, [command] + sys.argv[1:])
 
   run('make', ['publish'], {env});
   let packaged = entries();
-  for (const name of ['themes/dark.json', 'themes/light.json', 'dragOrder.js']) {
+  for (const name of ['themes/dark.json', 'themes/light.json', 'dragOrder.js', 'windowPreviewMenu.js']) {
     assert.ok(packaged.has(name), `Modern package is missing ${name}`);
   }
   assert.ok(!packaged.has('schemas/gschemas.compiled'),
     'modern bundles contain portable schema source for the official installer to compile');
   for (const name of packaged) {
-    if (name.endsWith('.js')) syntax(name, archiveText(name), false);
+    if (!name.endsWith('.js')) continue;
+    const text = archiveText(name);
+    syntax(name, text, false);
+    for (const [, target] of text.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
+      if (!target.startsWith('.')) continue;
+      assert.ok(packaged.has(posix.normalize(posix.join(posix.dirname(name), target))),
+        `${name} references missing packaged module ${target}`);
+    }
   }
+  assert.match(archiveText('dock.js'), /from\s+['"]\.\/windowPreviewMenu\.js['"]/,
+    'modern dock loads its thumbnail chooser component');
   assert.deepEqual(readFileSync(join(stage, 'unrelated-backup.zip')), sentinel);
   const modernArchive = readFileSync(join(stage, bundle));
   writeFileSync(join(stage, 'modern-backup.zip'), modernArchive);
@@ -102,6 +111,9 @@ os.execv('/usr/bin/' + command, [command] + sys.argv[1:])
   assert.ok(packaged.has('themes/dark.json') && packaged.has('themes/light.json'));
   assert.deepEqual(JSON.parse(archiveText('metadata.json'))['shell-version'], ['42', '43', '44']);
   assert.ok(packaged.has('dragOrder.js'));
+  assert.ok(packaged.has('windowPreviewMenu.js'), 'legacy package contains the thumbnail chooser');
+  assert.match(archiveText('dock.js'), /Me\.imports\.windowPreviewMenu/,
+    'legacy dock loads its generated thumbnail chooser component');
   for (const name of packaged) {
     assert.ok(!name.includes('recents'), 'removed recent-files helpers must stay absent');
     if (!name.endsWith('.js')) continue;

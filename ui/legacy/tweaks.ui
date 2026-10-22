@@ -417,7 +417,7 @@
                   <object class="GtkLabel">
                     <property name="halign">start</property>
                     <property name="valign">center</property>
-                    <property name="label" translatable="yes">Click to focus or restore a window. Click the active app again to minimize its single window, or choose from its multiple windows.</property>
+                    <property name="label" translatable="yes">Click to focus or restore a window. Click the active app again to minimize its single window, or choose a window from thumbnail previews.</property>
                   </object>
                 </child>
               </object>

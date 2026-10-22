@@ -1,6 +1,6 @@
 # Dash2Dock Animated
 
-An animated desktop dock for GNOME Shell 46–51, based on [icedman's Dash2Dock Animated](https://github.com/icedman/dash2dock-lite). This fork is maintained on the `main` branch.
+An animated desktop dock targeting GNOME Shell 46–51, based on [icedman's Dash2Dock Animated](https://github.com/icedman/dash2dock-lite). This fork is maintained on the `main` branch.
 
 [![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
 
@@ -8,17 +8,19 @@ An animated desktop dock for GNOME Shell 46–51, based on [icedman's Dash2Dock 
 
 ## Current Version
 
-Version **105** includes:
+Version **106** includes:
 
+* A thumbnail chooser for apps with multiple windows: click the active app to see small window previews with titles, then select one to activate only that window. Right-click retains GNOME's app actions.
+* Reliable restore after Show Desktop or minimizing all windows: clicking an app activates one window through GNOME's normal window activation path.
 * Reliable edge reveal after autohiding: moving into the dock's former on-screen area during the hide animation no longer opens it before you reach the screen edge.
 * Single-window toggling: click an app to focus or restore its window, then click it again while focused to minimize that window.
-* Multi-window selection: click an app to focus its most recently used unminimized eligible window, or restore one window if all are minimized. Click the active app again to open its native window menu and choose a specific window.
+* Multi-window selection: click an app to focus its most recently used unminimized eligible window, or restore one window if all are minimized. Click the active app again to open the thumbnail chooser; click again to dismiss it.
 * Scrollwheel cycling that restores only the selected window and leaves minimized siblings alone. Hold Ctrl while scrolling to stay on the current workspace.
-* Native Ctrl-click and middle-click actions for opening a new window, right-click window menus, and custom folder launchers.
+* Native Ctrl-click and middle-click actions for opening a new window, right-click app actions, and custom folder launchers.
 * Click targets that follow enlarged icons beyond the dock frame, and zoom recovery when leaving after a click.
 * Updated Blur My Shell integration, live settings updates, favorite reordering, and reduced idle animation and resource use.
 
-These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; native app menus retain GNOME's window list and application actions. See the [changelog](CHANGELOG.md) for the full change list.
+These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; the chooser and right-click app menu retain the app-wide window list. Preview resources are released when the chooser closes, and unavailable window surfaces show the app icon. Minimized windows remain minimized while their previews are displayed; their last available compositor contents may be shown. See the [changelog](CHANGELOG.md) for the full change list.
 
 ## Compatibility
 
@@ -27,12 +29,14 @@ These window actions are this fork's GNOME dock policy. Monitor filtering applie
 * Other Shell versions are not covered by these build targets. Declared compatibility still requires testing in the target desktop session.
 * Integrations include Compiz Magic Lamp Animation and Blur My Shell.
 
+The Show Apps button can be placed at the front of horizontal docks. This option is not implemented for vertical docks.
+
 ## Features
 
 * Animated, resizable dock icons and multi-monitor support
 * Bottom, top, left, and right dock positions
 * Autohide/intellihide and panel mode
-* Scrollwheel window cycling, single-window toggling, and native window menus
+* Window thumbnails, scrollwheel cycling, single-window toggling, and native app menus
 * Favorite reordering and an optional Show Apps button
 * Analog clock, dynamic calendar and Trash icons, mounted devices, and a Downloads fan
 * Top panel styling, icon tint/monochrome effects, themes, and custom icons
@@ -63,7 +67,7 @@ gnome-extensions enable dash2dock-lite@icedman.github.com
 
 ### Updating an Existing Installation
 
-For an existing installation, build the archive with `make publish`, then use the update helper. It requires Python 3, `dconf`, and `gnome-extensions`:
+For an existing installation, build the archive with `make publish`, then use the update helper. It requires Python 3.9 or newer, `dconf`, and `gnome-extensions`:
 
 ```sh
 python3 tools/apply_update.py dash2dock-lite@icedman.github.com.zip \
@@ -74,7 +78,7 @@ The helper backs up installed files, extension preferences, custom configuration
 
 This helper requires an existing extension directory that is not a symlink and an unchanged settings schema. A schema change requires a reviewed migration. Log out and back in after a successful update to load the new code.
 
-For direct development installation, `make build` compiles schemas and `make install` copies the working tree into the user extension directory. The default `make` target also runs ESLint, which must be installed separately.
+For direct development installation, `make build` compiles schemas and `make install` copies the working tree into the user extension directory. The default `make` target also installs the extension and runs ESLint, which must be installed separately. For development and release commands, see [HACKING.md](HACKING.md).
 
 ### Other Distribution Channels
 
@@ -112,7 +116,7 @@ Paths are relative to `~/.config/d2da/`. You can also use names from your instal
 }
 ```
 
-The named icons must exist in your icon theme. To override an application icon, use its app ID:
+The named icons must exist in your icon theme. To override an application icon, use its desktop-file ID with the `.desktop` suffix removed:
 
 ```json
 {
@@ -167,7 +171,7 @@ Log out and back in after replacing installed extension code.
 
 ## Development and Testing
 
-Development uses `main`. The automated checks require Node.js 18 or newer, GJS, Python 3, Make, GLib schema tools, zip, and unzip:
+Development uses `main`. The automated checks require Node.js 18 or newer, GJS, Python 3.9 or newer, Make, GLib schema tools, zip, and unzip:
 
 ```sh
 npm test
@@ -175,11 +179,11 @@ npm run check
 glib-compile-schemas --strict --dry-run schemas
 ```
 
-See [tests/README.md](tests/README.md) for regression coverage and the desktop verification checklist. Automated tests cover activation, magnified input, zoom exit handling, lifecycle cleanup, settings, packaging, and upgrade rollback. Live compositor input, Shell compatibility, rendering, CPU use, and RAM use require verification in a GNOME desktop session.
+See [tests/README.md](tests/README.md) for regression coverage and [CHECKLIST.md](CHECKLIST.md) for desktop release checks. [DESIGN.md](DESIGN.md) describes the current modules and lifecycle contracts. Automated tests cover activation, magnified input, zoom exit handling, lifecycle cleanup, settings, packaging, and upgrade rollback. Live compositor input, Shell compatibility, rendering, CPU use, and RAM use require verification in a GNOME desktop session.
 
 ## Bug Reporting
 
-Include:
+See [ERRORS.md](ERRORS.md) for troubleshooting and collecting diagnostics. Include:
 
 * Distribution and version
 * GNOME Shell version and Wayland/X11 session type

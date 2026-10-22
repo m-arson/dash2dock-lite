@@ -1,91 +1,48 @@
-Now that Dash2Dock Animated is beyond proof-of-concept... Make it a proper extension, not just a kludget.
+# Current architecture
 
-# Structure
+This document describes the implementation in this fork. Earlier sketches of separate `DockContainer` and `DockWidget` APIs were proposals, not implemented interfaces. User-facing setup is in [README.md](README.md); contributor commands are in [HACKING.md](HACKING.md).
 
-DockContainer
-+--RenderForeground
-+--Dock
-   +--DockWidget
-   +--DockWidget
-      ---> RenderForeground
-      ---> RenderBackground
-+--RenderBackground
+## Modules and ownership
 
-DockServices (subscription model)
-+--Trash
-+--MountedDevices
-+--Notifications
-+--AppCount
-+--Preview
-+--IconsCache
-+--Monitors
-+--MPRIS
+| Module | Responsibility |
+| --- | --- |
+| `extension.js` | Owns settings, timers, services, integrations, configuration, dock topology, and extension enable/disable. |
+| `dock.js` | Owns a dock's native Dash, monitor placement, layout, transformed input buttons, favorites, app activation, and scrolling. |
+| `animator.js` | Updates reusable icon renderers, zoom, bounce, running dots, and badges; settles when visual state stops changing. |
+| `dockItems.js` | Dock actors, overlays, custom launcher items, backgrounds, and their app-action menus. |
+| `windowPreviewMenu.js` | Native popup menu with proportional compositor clones, title labels, bounded scrolling, and window-row lifetimes. |
+| `dockItemMenu.js` | Folder/Downloads pullout actors and their temporary contents. |
+| `autohide.js` | Window overlap tracking, edge/pressure reveal, and hide/show transitions. |
+| `services.js` | Clock/calendar deadlines, notification state, folder monitoring, asynchronous Downloads/Trash scans, and mounted devices. |
+| `timer.js` | Shared GLib timer subscriptions, deferred work, cancellation, and source removal when idle. |
+| `integrations.js` | Blur My Shell and Compiz hooks, including restoring or releasing owned wrappers. |
+| `prefs.js`, `preferences/`, `ui/` | Preferences UI, settings bindings, presets, and legacy UI variants. |
+| `style.js`, `drawing.js`, `effects/`, `apps/` | Generated stylesheets, drawing helpers, icon effects, and dynamic icon content. |
+| `monitors.js` | Preferences-side Mutter display configuration queries and stale-reply rejection. |
 
-# DockContainer
+## Rendering and input
 
-Contains the Dock and other renderer. This will clip the widgets to the assigned monitor.
+The dock retains native Dash app buttons for activation, drag-and-drop, keyboard interaction, and app menus. Animated icons render separately in `renderArea`; the renderer actors are not click targets. `_syncIconInput()` transforms the corresponding native buttons to match the displayed icons, including their overhang outside the dock background. It restores those transforms for dragging and teardown.
 
-# Dock
+The dock's `struts`, `dwell`, background, and input geometry serve different purposes: reserved work area, edge reveal, visual fill/blur, and pointer interaction. Keep their coordinates consistent with the selected monitor and scale. While hidden, autohide ignores the former visible footprint so the hide animation cannot create an oversized reveal zone.
 
-Dock allows any widget to be docked at any edge of the screen.
+Blur My Shell receives allocated, signal-capable dock actors. Newer Blur My Shell versions own their surface geometry; older hooks use the compatibility path. Integration changes must preserve that distinction and background/renderer stacking.
 
-* may be assigned a child
-* may be assigned to a monitor
-* has vertical and horizontal layout
-* handles animation loop (not the rendering)
-* handles autohide (via translationX,Y)
+## Window selection
 
-```js
-class Dock {
-    
-    add_child();
+Normal app clicks use this fork's activation policy: a focused single window minimizes; an inactive app activates one recent eligible window; a focused multi-window app opens the preview chooser. Ctrl-click, middle-click, and right-click retain native app actions. Click and scroll selection use the configured monitor filter; the preview chooser retains an app-wide list, matching the native app menu.
 
-    slide_in();
+Activation uses `Meta.Window.activate()` on the active workspace and `Meta.Workspace.activate_with_focus()` when switching workspaces. These paths leave Show Desktop and restore the selected window and any required transient parents. Low-level `raise()` and `focus()` alone do not provide those semantics. Hidden or minimized windows cannot qualify for the focused-window minimize toggle.
 
-    slide_out();
+The preview chooser uses `PopupMenu` and `PopupBaseMenuItem` for native focus, activation, and dismissal. It clones existing compositor actors without showing or unminimizing their source windows. Missing surfaces use an app-icon fallback. Window changes update rows while open; closing releases clones and window/app connections. Destroying the app icon also destroys its chooser.
 
-    set_dock_position();
+## Work and lifetime rules
 
-    set_orientation();
+- Input, settings, window events, and service changes wake animation. Settled visuals stop the animation subscription; stationary hover is not a reason to repaint indefinitely.
+- Services schedule their next deadline and use filesystem/notification events where available. Disabled optional services release their watchers; locking suspends their work.
+- Downloads and Trash enumeration runs asynchronously. Cancellation, generation checks, coalesced events, and bounded displayed metadata prevent stale results or bursts from retaining unnecessary work.
+- Every timer, signal, file monitor, menu, actor, and integration hook needs an owner and a cleanup path. Disable and partial teardown must release remaining resources even if one cleanup operation fails.
+- Check lifecycle/generation state before applying asynchronous results. Do not create new icon textures during allocation or actor teardown.
+- Keep version-dependent APIs guarded. Modern builds use ES modules; the legacy build converts imports/exports and changes the declared Shell targets to 42–44.
 
-    set_autohide(settings);
-
-    dock();
-
-    undock();
-
-    _layout();
-
-    _animate(delta);
-
-    start_animation();
-
-    end_animation();
-
-    _debounced_end_animation();
-}
-```
-
-# DockWidget
-
-* widget that may be added to a dock
-
-```js
-class DockWidget {
-
-    on_animate(delta);
-
-    preferred_size(constraints);
-}
-```
-
-# Animator
-
-
-# Services
-
-```js
-class Services {
-
-}
-```
+The regression suites enforce these contracts with controlled fakes and selected real GLib/Gio operations. [CHECKLIST.md](CHECKLIST.md) covers compositor behavior and desktop compatibility that those tests cannot establish.
