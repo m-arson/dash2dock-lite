@@ -1,0 +1,47 @@
+# Personal desktop settings; optional explicit restore only.
+# Captured 2026-10-22T07:27:44.814153+00:00
+
+[/]
+alphabetize=true
+battery-colors=@as []
+battery-slot=0
+fan-colors=@as []
+fixed-widths=true
+gpu-colors=@as []
+hide-icons=false
+hide-zeros=false
+hot-sensors=['_memory_usage_', '_processor_usage_', '__temperature_max__']
+icon-style=1
+include-processor-cores=false
+include-public-ip=true
+include-static-gpu-info=false
+include-static-info=false
+memory-colors=@as []
+memory-measurement=1
+menu-centered=false
+monitor-cmd='gnome-system-monitor'
+network-public-ip-interval=60
+network-public-ip-provider=0
+network-public-ip-show-flag=true
+network-speed-format=0
+network-speed-unit=0
+position-in-panel=2
+processor-colors=@as []
+show-battery=false
+show-fan=true
+show-gpu=false
+show-memory=true
+show-network=true
+show-processor=true
+show-storage=true
+show-system=true
+show-temperature=true
+show-voltage=true
+storage-measurement=1
+storage-path='/'
+system-colors=@as []
+temperature-colors=@as []
+unit=0
+update-time=5
+use-higher-precision=true
+use-processor-cpufreq=false

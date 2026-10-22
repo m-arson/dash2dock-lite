@@ -8,7 +8,7 @@ npm run check
 glib-compile-schemas --strict --dry-run schemas
 ```
 
-No npm dependency installation is required for these scripts. `npm test` discovers the `.mjs` suites in this directory and runs three explicit GJS suites: `test_timer_lifecycle.js`, `test_background_lifecycle.js`, and `test_drag_order.js`. It stops on the first failure. `npm run check` parses JavaScript files without executing the GNOME UI.
+No npm dependency installation is required for these scripts. `npm test` discovers the `.mjs` suites in this directory, runs three explicit GJS suites (`test_timer_lifecycle.js`, `test_background_lifecycle.js`, and `test_drag_order.js`), and runs `test_desktop_setup.py`. It stops on the first failure. `npm run check` parses JavaScript files without executing the GNOME UI.
 
 ## Coverage
 
@@ -28,6 +28,7 @@ The tests exercise production code with small Shell UI fakes, plus real GLib tim
 | Resources and services | Timer failure/cancellation, teardown isolation, menu/canvas/integration disposal, notification signals, service deadlines, disabled watchers, coalesced folder scans, bounded Downloads metadata, and shader source/uniform reuse. |
 | Blur My Shell | Discovery before allocation, signal-capable actors, stacking, modern blur geometry ownership, and legacy hooks. |
 | Packaging and updates | Modern/legacy contents and metadata, themes and new source modules, archive validation, exact preference preservation, rollback after corrupted/partial installs, and unsafe backup destinations. |
+| Full desktop setup | Exact extension versions and schema sources, pinned/offline archives, snapshot integrity and scope, dry runs, wallpaper/user-path adaptation, and rollback after install, settings, or enable failures. All writes are mocked or confined to temporary directories. |
 
 Packaging tests build both bundles in guarded temporary directories. Upgrade tests simulate installation entirely in temporary directories and never call the real extension installer. Failure-path tests deliberately log injected timer/disposal errors and a preview-open error to exercise the native-menu fallback; a nonzero exit status or failed assertion determines failure, not those expected messages.
 

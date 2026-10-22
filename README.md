@@ -2,7 +2,7 @@
 
 **Based on [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work.
 
-This personal fork is updated around my preferred dock configuration, saved in [my-custom.dconf](my-custom.dconf), and maintained on `main`. Its changes have only been tested on my own machine, described [below](#tested-setup).
+This personal fork is updated around my preferred dock configuration, saved in [my-custom.dconf](my-custom.dconf). Its changes have only been tested on my own machine, described [below](#tested-setup).
 
 If you enjoy this cool project, you can **[support him on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**.
 
@@ -10,7 +10,7 @@ If you enjoy this cool project, you can **[support him on Buy Me a Coffee](https
 
 ![Dash2Dock Animated on a GNOME desktop, with a left-edge dock and magnified icons](screenshots/desktop-left-dock-framed.svg)
 
-[Install](#installation) · [Update](#updating) · [Restore my settings](#restore-my-custom-settings) · [Customize](#customization) · [Troubleshoot](#troubleshooting-and-bug-reports)
+[Install](#installation) · [Update](#updating) · [Restore my settings](#restore-my-custom-settings) · [Full desktop setup](desktop-setup/README.md) · [Customize](#customization) · [Troubleshoot](#troubleshooting-and-bug-reports)
 
 ## Overview
 
@@ -41,6 +41,23 @@ This is the maintainer's local setup, recorded on October 22, 2026. Testing of t
 | Session | Wayland |
 | Architecture | `x86_64` |
 | CPU | Intel Core Ultra 5 125U |
+
+### Companion extensions and settings
+
+The desktop shown above uses these installed versions. Their current settings are saved in the optional [full desktop profile](desktop-setup/README.md), alongside the wallpaper, selected appearance settings, and pinned-app order.
+
+| Extension | Installed version |
+| --- | --- |
+| [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) | 66 |
+| [Blur my Shell](https://extensions.gnome.org/extension/3193/blur-my-shell/) | 76 |
+| [Compiz alike magic lamp effect](https://extensions.gnome.org/extension/3740/compiz-alike-magic-lamp-effect/) | 25 |
+| [Compiz windows effect](https://extensions.gnome.org/extension/3210/compiz-windows-effect/) | 29 |
+| [Coverflow Alt-Tab](https://extensions.gnome.org/extension/97/coverflow-alt-tab/) | 82 |
+| Dash2Dock Animated, this fork | 109 |
+| [User Themes](https://extensions.gnome.org/extension/19/user-themes/) | 64 |
+| [Vitals](https://extensions.gnome.org/extension/1460/vitals/) | 86 |
+
+This complete profile targets **GNOME 48**, with **277 extension preferences and 20 desktop settings**. Its guide includes installation, an offline bundle, and settings restoration. Matching the screenshot also requires the listed applications and browser web apps; see the guide for details. The setup is optional and does not change your current desktop automatically.
 
 ## Dock behavior
 
@@ -131,6 +148,8 @@ dconf load /org/gnome/shell/extensions/dash2dock-lite/ < my-custom.dconf
 Then log out and back in. The file is included in both extension archives and is applied only when you run the command. It retains `/home/arson/Downloads` as `downloads-path`; adjust that value if restoring under a different username.
 
 This full snapshot is separate from the appearance-only JSON theme export below.
+
+To restore the other seven extensions and the desktop appearance too, follow the [full desktop setup guide](desktop-setup/README.md).
 
 ## Customization
 

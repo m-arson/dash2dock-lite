@@ -1,0 +1,13 @@
+# Personal desktop settings; optional explicit restore only.
+# Captured 2026-10-22T07:27:44.814153+00:00
+
+[/]
+friction=3.5
+mass=70.0
+maximize-effect=true
+preset='R'
+resize-effect=false
+speedup-factor-divider=12.0
+spring-k=3.7999999999999998
+x-tiles=6.0
+y-tiles=6.0

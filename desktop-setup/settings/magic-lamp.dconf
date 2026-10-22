@@ -1,0 +1,8 @@
+# Personal desktop settings; optional explicit restore only.
+# Captured 2026-10-22T07:27:44.814153+00:00
+
+[/]
+duration=400.0
+effect='default'
+x-tiles=10.0
+y-tiles=10.0

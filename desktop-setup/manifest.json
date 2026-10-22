@@ -1,0 +1,434 @@
+{
+  "format_version": 1,
+  "captured_at": "2026-10-22T07:27:44.814153+00:00",
+  "title": "My GNOME 48 desktop",
+  "tested_environment": {
+    "distribution": "Debian GNU/Linux 13.7 (trixie)",
+    "kernel": "7.1.13+deb13-amd64",
+    "shell_version": "48.7",
+    "shell_major": 48,
+    "session": "wayland",
+    "architecture": "x86_64"
+  },
+  "extensions": [
+    {
+      "uuid": "appindicatorsupport@rgcjonas.gmail.com",
+      "name": "AppIndicator and KStatusNotifierItem Support",
+      "version": 66,
+      "shell_versions": [
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51"
+      ],
+      "upstream_url": "https://github.com/ubuntu/gnome-shell-extension-appindicator",
+      "listing_url": "https://extensions.gnome.org/extension/615/appindicator-support/",
+      "archive": "appindicatorsupport@rgcjonas.gmail.com.shell-extension.zip",
+      "settings_file": "settings/appindicator.dconf",
+      "settings_path": "/org/gnome/shell/extensions/appindicator/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.appindicator",
+          "path": "/org/gnome/shell/extensions/appindicator/",
+          "file": "schemas/org.gnome.shell.extensions.appindicator.gschema.xml",
+          "sha256": "4a925c817b278b0199ac3f5cc5a7348e82795ad65e9b7f9993546609117bf9bb"
+        }
+      ],
+      "excluded_keys": [],
+      "version_tag": 75340,
+      "version_review_url": "https://extensions.gnome.org/review/75340",
+      "download_url": "https://extensions.gnome.org/download-extension/appindicatorsupport@rgcjonas.gmail.com.shell-extension.zip?version_tag=75340",
+      "preference_count": 10,
+      "settings_sha256": "832dada3404524a41cef7121ae55c53bc3ccda93b60cd9a6a3907346de580a5a",
+      "archive_sha256": "11ee9b334053606177ea0cb301252512eec1abff999e97905699bb91a11d36e4"
+    },
+    {
+      "uuid": "blur-my-shell@aunetx",
+      "name": "Blur my Shell",
+      "version": 76,
+      "shell_versions": [
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51"
+      ],
+      "upstream_url": "https://github.com/aunetx/blur-my-shell",
+      "listing_url": "https://extensions.gnome.org/extension/3193/blur-my-shell/",
+      "archive": "blur-my-shell@aunetx.shell-extension.zip",
+      "settings_file": "settings/blur-my-shell.dconf",
+      "settings_path": "/org/gnome/shell/extensions/blur-my-shell/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.overview",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/overview/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.appfolder",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/appfolder/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.panel",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/panel/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.dash-to-dock",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/dash-to-dock/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.applications",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/applications/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.screenshot",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/screenshot/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.lockscreen",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/lockscreen/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.window-list",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/window-list/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.coverflow-alt-tab",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/coverflow-alt-tab/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.popup",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/popup/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.hidetopbar",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/hidetopbar/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        },
+        {
+          "id": "org.gnome.shell.extensions.blur-my-shell.dash-to-panel",
+          "path": "/org/gnome/shell/extensions/blur-my-shell/dash-to-panel/",
+          "file": "schemas/org.gnome.shell.extensions.blur-my-shell.gschema.xml",
+          "sha256": "e48b386af5934c75c50d6b2f4c8c8eabb77c4a5756f115a48c4c1aeefc85a7b8"
+        }
+      ],
+      "excluded_keys": [
+        "sigma",
+        "brightness",
+        "customize"
+      ],
+      "version_tag": 76770,
+      "version_review_url": "https://extensions.gnome.org/review/76770",
+      "download_url": "https://extensions.gnome.org/download-extension/blur-my-shell@aunetx.shell-extension.zip?version_tag=76770",
+      "preference_count": 71,
+      "settings_sha256": "c042bfbe7e6f5eb4d8db609fbb873b0c2ba30a32c28ad38d5677ea54376eb956",
+      "archive_sha256": "e1b62766e7be4bb63dc47ab3b350207fec426984b65061a352f9dd4d3df87126"
+    },
+    {
+      "uuid": "compiz-alike-magic-lamp-effect@hermes83.github.com",
+      "name": "Compiz alike magic lamp effect",
+      "version": 25,
+      "shell_versions": [
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51"
+      ],
+      "upstream_url": "https://github.com/hermes83/compiz-alike-magic-lamp-effect",
+      "listing_url": "https://extensions.gnome.org/extension/3740/compiz-alike-magic-lamp-effect/",
+      "archive": "compiz-alike-magic-lamp-effect@hermes83.github.com.shell-extension.zip",
+      "settings_file": "settings/magic-lamp.dconf",
+      "settings_path": "/org/gnome/shell/extensions/ncom/github/hermes83/compiz-alike-magic-lamp-effect/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.com.github.hermes83.compiz-alike-magic-lamp-effect",
+          "path": "/org/gnome/shell/extensions/ncom/github/hermes83/compiz-alike-magic-lamp-effect/",
+          "file": "schemas/org.gnome.shell.extensions.com.github.hermes83.compiz-alike-magic-lamp-effect.gschema.xml",
+          "sha256": "8a54175ed87149f1aa74829d06647cb82f043db8ca5a776e10d41e192b03e1a4"
+        }
+      ],
+      "excluded_keys": [],
+      "version_tag": 76122,
+      "version_review_url": "https://extensions.gnome.org/review/76122",
+      "download_url": "https://extensions.gnome.org/download-extension/compiz-alike-magic-lamp-effect@hermes83.github.com.shell-extension.zip?version_tag=76122",
+      "preference_count": 4,
+      "settings_sha256": "857da36408b88cce87326e18337efdebea422949ea64eff220764093f0de461f",
+      "archive_sha256": "ea03fb36c6c992e39a447d102a48f5e0df8c2fd7ff76216ef9f79295409ccfe6"
+    },
+    {
+      "uuid": "compiz-windows-effect@hermes83.github.com",
+      "name": "Compiz windows effect",
+      "version": 29,
+      "shell_versions": [
+        "45",
+        "46",
+        "47",
+        "48",
+        "49"
+      ],
+      "upstream_url": "https://github.com/hermes83/compiz-windows-effect",
+      "listing_url": "https://extensions.gnome.org/extension/3210/compiz-windows-effect/",
+      "archive": "compiz-windows-effect@hermes83.github.com.shell-extension.zip",
+      "settings_file": "settings/compiz-windows.dconf",
+      "settings_path": "/org/gnome/shell/extensions/com/github/hermes83/compiz-windows-effect/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.com.github.hermes83.compiz-windows-effect",
+          "path": "/org/gnome/shell/extensions/com/github/hermes83/compiz-windows-effect/",
+          "file": "schemas/org.gnome.shell.extensions.com.github.hermes83.compiz-windows-effect.gschema.xml",
+          "sha256": "5e786c46ab492972f209f676b58cbcf043f3431426030bfd8defff7935694e81"
+        }
+      ],
+      "excluded_keys": [
+        "last-version"
+      ],
+      "version_tag": 67396,
+      "version_review_url": "https://extensions.gnome.org/review/67396",
+      "download_url": "https://extensions.gnome.org/download-extension/compiz-windows-effect@hermes83.github.com.shell-extension.zip?version_tag=67396",
+      "preference_count": 9,
+      "settings_sha256": "cde348477c9e6fda02fc2ccb0a3cd40c7bfec965d70ba36202eb2ebb6a5cc0f3",
+      "archive_sha256": "b1b3ca532e0ea8d7f26f60fc71bde9928808cbfe9f40af5cb2a785fb733f6bfd"
+    },
+    {
+      "uuid": "CoverflowAltTab@palatis.blogspot.com",
+      "name": "Coverflow Alt-Tab",
+      "version": 82,
+      "shell_versions": [
+        "48"
+      ],
+      "upstream_url": "https://github.com/dsheeler/CoverflowAltTab",
+      "listing_url": "https://extensions.gnome.org/extension/97/coverflow-alt-tab/",
+      "archive": "CoverflowAltTab@palatis.blogspot.com.shell-extension.zip",
+      "settings_file": "settings/coverflow-alt-tab.dconf",
+      "settings_path": "/org/gnome/shell/extensions/coverflowalttab/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.coverflowalttab",
+          "path": "/org/gnome/shell/extensions/coverflowalttab/",
+          "file": "schemas/org.gnome.shell.extensions.coverflowalttab.gschema.xml",
+          "sha256": "91fff4edaa8af8ec69ad327c64c67c1773aae21d7c905b63cdbc44cccc697168"
+        }
+      ],
+      "excluded_keys": [],
+      "version_tag": 65231,
+      "version_review_url": "https://extensions.gnome.org/review/65231",
+      "download_url": "https://extensions.gnome.org/download-extension/CoverflowAltTab@palatis.blogspot.com.shell-extension.zip?version_tag=65231",
+      "preference_count": 45,
+      "settings_sha256": "3523dabf425fe2e5f326c3749922a2a8c287818c6b474ac94aba43da793d06b6",
+      "archive_sha256": "b977f275f9d43fa4ceb14449923ce6d0f025d64e990cca2502a6c81ba58c3811"
+    },
+    {
+      "uuid": "dash2dock-lite@icedman.github.com",
+      "name": "Dash2Dock Animated",
+      "version": 109,
+      "shell_versions": [
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51"
+      ],
+      "upstream_url": "https://github.com/icedman/dash2dock-lite",
+      "listing_url": "https://extensions.gnome.org/extension/4994/dash2dock-lite/",
+      "archive": "dash2dock-lite@icedman.github.com.shell-extension.zip",
+      "settings_file": "settings/dash2dock.dconf",
+      "settings_path": "/org/gnome/shell/extensions/dash2dock-lite/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.dash2dock-lite",
+          "path": "/org/gnome/shell/extensions/dash2dock-lite/",
+          "file": "schemas/org.gnome.shell.extensions.dash2dock-lite.gschema.xml",
+          "sha256": "20abb633cd795d8de40570f9f9866592938e16b38a297fb59bbc7c1188a41023"
+        }
+      ],
+      "excluded_keys": [
+        "msg-to-ext",
+        "msg-to-pref",
+        "monitor-count"
+      ],
+      "note": "Use this fork version 109; the upstream store package does not contain the fork fixes.",
+      "preference_count": 94,
+      "settings_sha256": "b8e829a2de3949cefa0906c95134f749197c4571044e566154e67f5cb6ab6a94",
+      "archive_sha256": "4fd6412f8ee98d7c9409c4701da65e5b17eec07e1302134f5f85651380b31106"
+    },
+    {
+      "uuid": "user-theme@gnome-shell-extensions.gcampax.github.com",
+      "name": "User Themes",
+      "version": 64,
+      "shell_versions": [
+        "48"
+      ],
+      "upstream_url": "https://gitlab.gnome.org/GNOME/gnome-shell-extensions",
+      "listing_url": "https://extensions.gnome.org/extension/19/user-themes/",
+      "archive": "user-theme@gnome-shell-extensions.gcampax.github.com.shell-extension.zip",
+      "settings_file": "settings/user-themes.dconf",
+      "settings_path": "/org/gnome/shell/extensions/user-theme/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.user-theme",
+          "path": "/org/gnome/shell/extensions/user-theme/",
+          "file": "schemas/org.gnome.shell.extensions.user-theme.gschema.xml",
+          "sha256": "224a7de0718538307714807bd41e2d7f5b05d389c530423a42691d1ede6f8937"
+        }
+      ],
+      "excluded_keys": [],
+      "version_tag": 63741,
+      "version_review_url": "https://extensions.gnome.org/review/63741",
+      "download_url": "https://extensions.gnome.org/download-extension/user-theme@gnome-shell-extensions.gcampax.github.com.shell-extension.zip?version_tag=63741",
+      "preference_count": 1,
+      "settings_sha256": "5f02367a0b5c82fed92e24895cd88b867d759df3306d868b0e2abb3496cef486",
+      "archive_sha256": "e373847bded79510dc68a2d24d80a99b630aa36980e2152f22812b5f52953d76"
+    },
+    {
+      "uuid": "Vitals@CoreCoding.com",
+      "name": "Vitals",
+      "version": 86,
+      "shell_versions": [
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51"
+      ],
+      "upstream_url": "https://github.com/corecoding/Vitals",
+      "listing_url": "https://extensions.gnome.org/extension/1460/vitals/",
+      "archive": "Vitals@CoreCoding.com.shell-extension.zip",
+      "settings_file": "settings/vitals.dconf",
+      "settings_path": "/org/gnome/shell/extensions/vitals/",
+      "schemas": [
+        {
+          "id": "org.gnome.shell.extensions.vitals",
+          "path": "/org/gnome/shell/extensions/vitals/",
+          "file": "schemas/org.gnome.shell.extensions.vitals.gschema.xml",
+          "sha256": "3da34f7782ddf5bc9bc6b56c041a03ae35f35384be9e897168661c4a15d36580"
+        }
+      ],
+      "excluded_keys": [],
+      "version_tag": 76696,
+      "version_review_url": "https://extensions.gnome.org/review/76696",
+      "download_url": "https://extensions.gnome.org/download-extension/Vitals@CoreCoding.com.shell-extension.zip?version_tag=76696",
+      "preference_count": 43,
+      "settings_sha256": "64d904cfebd2f3f17d05627b342ce28a5be008ef8bfcefd8e5b95f94c00253f0",
+      "archive_sha256": "844947eb90ecf0fa4990c9d2f6b9c4b1110953535c5e7cd8e01daa79683731a6"
+    }
+  ],
+  "appearance": {
+    "settings_file": "settings/appearance.dconf",
+    "settings_path": "/",
+    "paths": [
+      "/org/gnome/desktop/interface/",
+      "/org/gnome/desktop/background/",
+      "/org/gnome/desktop/wm/preferences/",
+      "/org/gnome/shell/"
+    ],
+    "keys": {
+      "/org/gnome/desktop/interface/": [
+        "gtk-theme",
+        "icon-theme",
+        "cursor-theme",
+        "cursor-size",
+        "color-scheme",
+        "font-name",
+        "document-font-name",
+        "monospace-font-name",
+        "text-scaling-factor",
+        "clock-show-date",
+        "clock-show-seconds"
+      ],
+      "/org/gnome/desktop/background/": [
+        "picture-uri",
+        "picture-uri-dark",
+        "picture-options",
+        "primary-color",
+        "secondary-color",
+        "color-shading-type"
+      ],
+      "/org/gnome/desktop/wm/preferences/": [
+        "titlebar-font",
+        "button-layout"
+      ],
+      "/org/gnome/shell/": [
+        "favorite-apps"
+      ]
+    },
+    "preference_count": 20,
+    "settings_sha256": "ebace451e48d043d77a3500d827296d22c55cbfee9a405853b522bd306df4b09"
+  },
+  "wallpaper": {
+    "file": "assets/wallpaper.png",
+    "sha256": "280dd51b465726b0c351fb458395d477f9229a6b1b304aeeeb8525057a4cba97",
+    "destination": ".local/share/backgrounds/dash2dock-desktop.png",
+    "width": 1200,
+    "height": 630
+  },
+  "favorite_apps": [
+    "org.gnome.Nautilus.desktop",
+    "brave-browser.desktop",
+    "dbeaver-ce.desktop",
+    "google-chrome.desktop",
+    "org.gnome.Ptyxis.desktop",
+    "geany.desktop",
+    "jetbrains-idea.desktop",
+    "com.usebruno.Bruno.desktop",
+    "packetsender.desktop",
+    "chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default.desktop",
+    "chrome-ompifgpmddkgmclendfeacglnodjjndh-Default.desktop",
+    "chrome-faolnafnngnfdaknnbpnkhgohbobgegn-Default.desktop"
+  ],
+  "additional_configured_extension": {
+    "uuid": "tiling-assistant@leleat-on-github",
+    "version": 51,
+    "included": false,
+    "note": "System extension configured enabled but not part of the eight requested extensions."
+  },
+  "favorite_app_names": [
+    "Files",
+    "Brave Web Browser",
+    "DBeaver",
+    "Google Chrome",
+    "Ptyxis",
+    "Geany",
+    "IntelliJ IDEA",
+    "Bruno (Flatpak)",
+    "Packet Sender",
+    "WhatsApp Web",
+    "Microsoft Teams (PWA)",
+    "Outlook (PWA)"
+  ]
+}

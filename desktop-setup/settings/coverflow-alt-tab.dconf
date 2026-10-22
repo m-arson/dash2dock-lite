@@ -1,0 +1,49 @@
+# Personal desktop settings; optional explicit restore only.
+# Captured 2026-10-22T07:27:44.814153+00:00
+
+[/]
+animation-time=0.20000000000000001
+bind-to-switch-applications=true
+bind-to-switch-windows=true
+blur-radius=0.0
+coverflow-switch-applications=['']
+coverflow-switch-applications-backward=['']
+coverflow-switch-windows=['']
+coverflow-switch-windows-backward=['']
+coverflow-window-angle=90.0
+coverflow-window-offset-width=50.0
+current-workspace-only='current'
+desaturate-factor=0.0
+dim-factor=1.0
+easing-function='ease-out-cubic'
+enforce-primary-monitor=false
+hide-panel=true
+highlight-color=(1.0, 1.0, 1.0)
+highlight-mouse-over=false
+highlight-use-theme-color=true
+icon-add-remove-effects='Fade Only'
+icon-has-shadow=false
+icon-style='Classic'
+invert-swipes=false
+offset=0
+overlay-icon-opacity=1.0
+overlay-icon-size=128.0
+perspective-correction-method='Move Camera'
+position='Bottom'
+prefs-default-height=600.0
+prefs-default-width=700.0
+preview-scaling-factor=0.80000000000000004
+preview-to-monitor-ratio=0.5
+raise-mouse-over=true
+randomize-animation-times=false
+switch-application-behaves-like-switch-windows=false
+switch-per-monitor=false
+switcher-background-color=(1.0, 1.0, 1.0)
+switcher-looping-method='Flip Stack'
+switcher-style='Coverflow'
+tint-blend=0.0
+tint-color=(0.0, 0.0, 0.0)
+tint-use-theme-color=true
+use-glitch-effect=false
+use-tint=true
+verbose-logging=false

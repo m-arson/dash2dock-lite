@@ -12,7 +12,7 @@ npm run check
 glib-compile-schemas --strict --dry-run schemas
 ```
 
-`npm test` discovers the Node `.mjs` suites and runs the three selected GJS lifecycle/drag suites. Packaging and upgrade checks operate in temporary directories. `npm run check` parses JavaScript; it does not lint or execute the GNOME UI. See [tests/README.md](tests/README.md) for scope and focused commands.
+`npm test` discovers the Node `.mjs` suites, runs the three selected GJS lifecycle/drag suites, and runs the Python desktop-setup tests. Packaging, upgrade, and desktop-setup checks use temporary directories and mocked installation/settings commands. `npm run check` parses JavaScript; it does not lint or execute the GNOME UI. See [tests/README.md](tests/README.md) for scope and focused commands.
 
 ## Build archives
 
@@ -42,6 +42,7 @@ File age alone does not indicate whether a source is obsolete. The repository au
 | `preferences/`, `ui/`, `themes/` | Current settings bindings, shared preferences UI, icons, support QR, and presets. Both build targets use this UI; the unused `ui/legacy/` snapshots were removed. |
 | `tools/transpile.py`, `tools/imports_*.js` | Required JavaScript conversion and entry points for Shell 42–44. |
 | `tools/apply_update.py` | Verified upgrades with file/settings backups and rollback. |
+| `desktop-setup/`, `tools/desktop_setup.py` | Optional GNOME 48 profile for eight pinned extensions, appearance, wallpaper, and app order; checks and dry runs precede explicit installation or restore. |
 | `tests/` | Automated regression suites and their runner; obsolete standalone experiments were removed. |
 | `screenshots/`, `.github/images/` | Historical upstream artwork retained with icedman's project attribution. |
 | `build/`, `dist/`, ZIP archives | Ignored, reproducible local build outputs. |

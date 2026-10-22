@@ -1,0 +1,30 @@
+# Personal desktop settings; optional explicit restore only.
+# Captured 2026-10-22T07:27:44.814153+00:00
+
+[org/gnome/desktop/interface]
+gtk-theme='Adwaita'
+icon-theme='Adwaita'
+cursor-theme='Adwaita'
+cursor-size=24
+color-scheme='default'
+font-name='Cantarell 11'
+document-font-name='Cantarell 11'
+monospace-font-name='Monospace 11'
+text-scaling-factor=1.0
+clock-show-date=true
+clock-show-seconds=false
+
+[org/gnome/desktop/background]
+picture-uri='__MY_DESKTOP_WALLPAPER_URI__'
+picture-uri-dark='__MY_DESKTOP_WALLPAPER_URI__'
+picture-options='centered'
+primary-color='#000000'
+secondary-color='#000000'
+color-shading-type='solid'
+
+[org/gnome/desktop/wm/preferences]
+titlebar-font='Adwaita Sans Bold 11'
+button-layout='appmenu:minimize,maximize,close'
+
+[org/gnome/shell]
+favorite-apps=['org.gnome.Nautilus.desktop', 'brave-browser.desktop', 'dbeaver-ce.desktop', 'google-chrome.desktop', 'org.gnome.Ptyxis.desktop', 'geany.desktop', 'jetbrains-idea.desktop', 'com.usebruno.Bruno.desktop', 'packetsender.desktop', 'chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default.desktop', 'chrome-ompifgpmddkgmclendfeacglnodjjndh-Default.desktop', 'chrome-faolnafnngnfdaknnbpnkhgohbobgegn-Default.desktop']

@@ -4,6 +4,7 @@ Extension versions refer to `metadata.json`. This fork's current behavior is doc
 
 ## Version 109
 
+* Document the maintainer's complete GNOME 48 setup, including eight installed extension versions, settings snapshots, appearance, wallpaper, and app order. Add an optional installer/restore helper with backups, version checks, and isolated tests.
 * Include an optional `my-custom.dconf` snapshot of 94 current preferences and document restoring it after a fresh install. Keep its application explicit; installation preserves existing settings.
 * Audit repository files by actual use; remove obsolete standalone experiments, unused UI layouts, launcher templates, custom icons, and the unused vector helper. Stop tracking the generated settings binary.
 * Keep modern and legacy packaging, use the shared current preferences UI, and make the default build compile without installing. Development installation uses the official ZIP installer.
