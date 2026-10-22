@@ -1,95 +1,111 @@
 # Dash2Dock Animated
 
-This project is a maintained fork of **[Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite)**, an animated desktop dock for GNOME Shell. The original project, design, and foundation are icedman's work; this fork adds fixes and improvements and is maintained on `main`, targeting GNOME Shell 46–51.
+**Based on [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work. This fork maintains that foundation with fixes and improvements on the `main` branch.
 
-If you enjoy this cool project, please **[support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**. This support goes to the original creator.
+If you enjoy this cool project, please **[support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**. Support goes to the original creator.
 
 [![Support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
 
-![Screenshot of icedman's original dock](screenshots/Screenshot%20from%202024-03-19%2015-31-27.png)
+![Dash2Dock Animated on a GNOME desktop, with a left-edge dock and magnified icons](screenshots/desktop-left-dock.png)
 
-The screenshot shows the upstream project; this fork's current behavior is described below.
+[Install](#installation) · [Update](#updating) · [Restore my settings](#restore-my-custom-settings) · [Customize](#customization) · [Troubleshoot](#troubleshooting-and-bug-reports)
 
-## Current Version
+## Overview
 
-Version **109** includes:
+An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **109**. See the [changelog](CHANGELOG.md) for release details.
 
-* Repository cleanup: remove obsolete prototypes, unused assets and launcher templates; generate settings binaries during builds. Both modern and legacy packages retain the current preferences UI and icedman's credits and support links.
-* Right-click menus open toward the desktop beside the clicked icon: right of a left dock, left of a right dock, below a top dock, and above a bottom dock. Menus follow the icon's magnified position, including custom launchers.
-* Freely dismissible previews: the source icon stays zoomed while you browse its previews. Move to another icon or away from the dock, click elsewhere, press Escape, or click the source icon again to dismiss without selecting a window. Clicking another icon works immediately.
-* A thumbnail chooser for apps with multiple windows: click the active app to see small window previews with titles, then select one to activate only that window. Right-click retains GNOME's app actions.
-* Reliable restore after Show Desktop or minimizing all windows: clicking an app activates one window through GNOME's normal window activation path.
-* Reliable edge reveal after autohiding: moving into the dock's former on-screen area during the hide animation no longer opens it before you reach the screen edge.
-* Single-window toggling: click an app to focus or restore its window, then click it again while focused to minimize that window.
-* Multi-window selection: click an app to focus its most recently used unminimized eligible window, or restore one window if all are minimized. Click the active app again to open the thumbnail chooser; click again to dismiss it.
-* Scrollwheel cycling that restores only the selected window and leaves minimized siblings alone. Hold Ctrl while scrolling to stay on the current workspace.
-* Native Ctrl-click and middle-click actions for opening a new window, right-click app actions, and custom folder launchers.
-* Click targets that follow enlarged icons beyond the dock frame, and zoom recovery when leaving after a click.
-* Updated Blur My Shell integration, live settings updates, favorite reordering, and reduced idle animation and resource use.
+* Animated icons, running indicators, notification badges, and favorite reordering
+* Multi-monitor support, autohide/intellihide, and panel mode
+* Window thumbnails, single-window toggling, and scrollwheel window selection
+* Optional clock, calendar, Trash, mounted-device icons, and a Downloads fan
+* Themes, custom icons/CSS, top-panel styling, and Blur My Shell integration
 
-These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; the chooser and right-click app menu retain the app-wide window list. Opening previews leaves other icons and windows available and does not move keyboard focus. Preview resources are released when the chooser closes, and unavailable window surfaces show the app icon. Minimized windows remain minimized while their previews are displayed; their last available compositor contents may be shown. See the [changelog](CHANGELOG.md) for the full change list.
+| Package | Declared GNOME Shell targets | Build command |
+| --- | --- | --- |
+| Modern | 46, 47, 48, 49, 50, 51 | `make publish` |
+| Legacy | 42, 43, 44 | `make publish-g44` |
 
-## Compatibility
+Declared targets still require verification in the corresponding desktop session. Other Shell versions are not covered. The Show Apps button's front-position option works on horizontal docks only.
 
-* The modern package declares GNOME Shell **46, 47, 48, 49, 50, and 51** support.
-* GNOME Shell **42, 43, and 44** use the separate [legacy build](#gnome-shell-42-44).
-* Other Shell versions are not covered by these build targets. Declared compatibility still requires testing in the target desktop session.
-* Integrations include Compiz Magic Lamp Animation and Blur My Shell.
+## Dock behavior
 
-The Show Apps button can be placed at the front of horizontal docks. This option is not implemented for vertical docks.
+| Action | Result |
+| --- | --- |
+| Click an app with one window | Focus or restore it. Click again while focused to minimize; clicking from the overview returns to the window. |
+| Click an inactive app with several windows | Focus its most recent eligible unminimized window, or restore one window if all are minimized. |
+| Click the active app with several windows | Open its thumbnail chooser. Select a preview to activate only that window. |
+| Browse previews | The source icon stays zoomed. Move to another icon or away, click outside, press Escape, or click the source again to dismiss without selecting. Another icon responds to the first click. |
+| Scroll over an app | Cycle through its windows, restoring only the selected window. Hold Ctrl to stay on the current workspace. |
+| Ctrl-click or middle-click | Use GNOME's native new-window action. |
+| Right-click | Open native app actions toward the desktop: right of a left dock, left of a right dock, below a top dock, or above a bottom dock. |
 
-## Features
+Click and scroll selection use the configured monitor filter; previews and the native app menu show the app-wide window list. Opening previews preserves keyboard focus and leaves minimized siblings minimized. Unavailable window surfaces show the app icon, and closing previews releases their resources.
 
-* Animated, resizable dock icons and multi-monitor support
-* Bottom, top, left, and right dock positions
-* Autohide/intellihide and panel mode
-* Window thumbnails, scrollwheel cycling, single-window toggling, and native app menus
-* Favorite reordering and an optional Show Apps button
-* Analog clock, dynamic calendar and Trash icons, mounted devices, and a Downloads fan
-* Top panel styling, icon tint/monochrome effects, themes, and custom icons
+This fork also restores windows after Show Desktop, keeps magnified icons clickable beyond the dock frame, and prevents the old dock footprint from revealing an autohidden dock before the pointer reaches the edge. These window actions are this fork's GNOME dock policy.
 
 ## Installation
 
-Build requirements are Git, Make, zip, GNOME's `gnome-extensions` CLI, and GLib schema tools. Run installation commands in your normal desktop session.
+Requirements: Git, Make, zip, GLib schema tools, and GNOME's `gnome-extensions` CLI. Run installation commands in your normal desktop session.
 
-Clone this fork and build the modern extension archive:
+Clone this fork:
 
 ```sh
 git clone --branch main https://github.com/m-arson/dash2dock-lite.git
 cd dash2dock-lite
+```
+
+### GNOME Shell 46-51
+
+Build the modern archive:
+
+```sh
 make publish
 ```
 
-For a **new installation**:
+### GNOME Shell 42-44
+
+Legacy conversion also requires Python 3. Build the legacy archive:
+
+```sh
+make publish-g44
+```
+
+Both targets write `dash2dock-lite@icedman.github.com.zip`. They build a local archive without installing or uploading it.
+
+### Install and enable
+
+For a **fresh installation**, install the archive you just built:
 
 ```sh
 gnome-extensions install dash2dock-lite@icedman.github.com.zip
 ```
 
-Log out and back in so GNOME Shell discovers the extension, then enable it through the Extensions app or:
+Log out and back in so GNOME Shell discovers the extension. Enable it in the Extensions app or run:
 
 ```sh
 gnome-extensions enable dash2dock-lite@icedman.github.com
 ```
 
-### Updating an Existing Installation
+To reuse the saved personal setup, follow [Restore My Custom Settings](#restore-my-custom-settings). For an existing installation, use the update steps below.
 
-For an existing installation, build the archive with `make publish`, then use the update helper. It requires Python 3.9 or newer, `dconf`, and `gnome-extensions`:
+The [GNOME Extensions listing](https://extensions.gnome.org/extension/4994/dash2dock-lite/) and [Arch AUR package](https://aur.archlinux.org/packages/gnome-shell-extension-dash2dock-lite) distribute upstream versions and may not include this fork's changes.
+
+## Updating
+
+Build the appropriate archive from the updated source, then run the update helper. It requires Python 3.9 or newer, `dconf`, and `gnome-extensions`:
 
 ```sh
 python3 tools/apply_update.py dash2dock-lite@icedman.github.com.zip \
   --backup-root "$HOME/.local/share/dash2dock-lite-backups"
 ```
 
-The helper backs up installed files, extension preferences, custom configuration, and relevant Shell settings. It validates the archive, verifies installed files and preserved extension preferences, and restores the previous installation and preferences if installation fails. It prints the backup location and records the result in `manifest.json` there.
+The helper backs up installed files, extension preferences, custom configuration, and relevant Shell settings. It validates the archive and verifies files and preserved preferences after installation, restoring the previous installation and preferences if the update fails. It prints the backup location and records the result in `manifest.json` there.
 
-This helper requires an existing extension directory that is not a symlink and an unchanged settings schema. A schema change requires a reviewed migration. Log out and back in after a successful update to load the new code.
+An existing extension directory must not be a symlink, and its settings schema must match the archive. Schema changes require a reviewed migration. Log out and back in after a successful update to load the new code.
 
-For development, `make` or `make build` compiles schemas without installing anything. `make install` builds the modern archive and installs it through `gnome-extensions`; `make g44` does the same for the legacy archive. Use the update helper above when you need its backups and preference verification. For development and release commands, see [HACKING.md](HACKING.md).
+## Restore My Custom Settings
 
-### Restore My Custom Settings
-
-[my-custom.dconf](my-custom.dconf) saves this fork maintainer's current dock configuration: 94 preferences, including their current default values. It includes appearance, position, autohide, animations, window behavior, and optional icons. Runtime messages and the detected monitor count are excluded.
+[my-custom.dconf](my-custom.dconf) saves this fork maintainer's dock configuration: **94 preferences**, including their current default values. It covers appearance, dock position, autohide, animations, window behavior, and optional icons. Runtime messages and the detected monitor count are excluded.
 
 After a fresh installation, copy `my-custom.dconf` to the new computer and run this command from the folder containing it:
 
@@ -97,57 +113,38 @@ After a fresh installation, copy `my-custom.dconf` to the new computer and run t
 dconf load /org/gnome/shell/extensions/dash2dock-lite/ < my-custom.dconf
 ```
 
-Then log out and back in. The snapshot is included in both extension archives and is applied only when you run the command. It retains the Downloads path `/home/arson/Downloads`; adjust `downloads-path` in the file if restoring under a different username. This snapshot is separate from the appearance-only JSON theme export described below.
+Then log out and back in. The file is included in both extension archives and is applied only when you run the command. It retains `/home/arson/Downloads` as `downloads-path`; adjust that value if restoring under a different username.
 
-### Other Distribution Channels
+This full snapshot is separate from the appearance-only JSON theme export below.
 
-The [GNOME Extensions listing](https://extensions.gnome.org/extension/4994/dash2dock-lite/) and the [Arch AUR package](https://aur.archlinux.org/packages/gnome-shell-extension-dash2dock-lite) distribute upstream versions; they may not include this fork's changes.
+## Customization
 
-## Theme Support
+### Themes
 
-Export settings through **Style > Themes > Export**. The preferences window reports the output path, `/tmp/<username>-theme.json`.
+Use **Style > Themes > Export** in preferences to export appearance settings. The window reports the output path, `/tmp/<username>-theme.json`.
 
-Edit the JSON and save it with a `.json` extension under `~/.config/d2da/themes/`. Bundled themes live under `<extension_path>/themes/`. Reopen preferences to load newly added themes.
+Edit the JSON, save it under `~/.config/d2da/themes/` with a `.json` extension, and reopen preferences to load it. Bundled presets live under `<extension_path>/themes/`.
 
-## Custom Icons
+### Custom icons
 
-Create `~/.config/d2da/icons/` for SVG icons and map them in `~/.config/d2da/icons.json`:
+Put SVG files in `~/.config/d2da/icons/` and create `~/.config/d2da/icons.json`:
 
 ```json
 {
   "icons": {
     "view-app-grid-symbolic": "icons/show-apps-icon.svg",
     "user-trash": "icons/my-own-trash.svg",
-    "user-trash-full": "icons/my-own-trash-full.svg"
-  }
-}
-```
-
-Paths are relative to `~/.config/d2da/`. You can also use names from your installed icon theme:
-
-```json
-{
-  "icons": {
-    "view-app-grid-symbolic": "show-apps-icon",
-    "user-trash": "trash",
     "user-trash-full": "trash-full"
-  }
-}
-```
-
-The named icons must exist in your icon theme. To override an application icon, use its desktop-file ID with the `.desktop` suffix removed:
-
-```json
-{
+  },
   "apps": {
     "spotify_spotify": "icons/spotify.svg"
   }
 }
 ```
 
-Disable and re-enable the extension after changing custom icons.
+Paths are relative to `~/.config/d2da/`. Values can also name icons from your installed icon theme, such as `trash-full`. Application keys use the desktop-file ID with the `.desktop` suffix removed. Disable and re-enable the extension after changing custom icons.
 
-## Custom Config
+### Configuration
 
 Create `~/.config/d2da/config.json`:
 
@@ -158,39 +155,26 @@ Create `~/.config/d2da/config.json`:
 }
 ```
 
-* `file-explorer` supplies a preferred folder-opening command. Without an override, the extension tries `nautilus`, `xdg-open`, then `gio open`.
-* `icon-size` overrides the icon size from preferences with a positive numeric value.
-* Disable and re-enable the extension to reload the file.
+* `file-explorer` sets a preferred folder-opening command. Without an override, the extension tries `nautilus`, `xdg-open`, then `gio open`.
+* `icon-size` overrides the preference with a positive numeric value.
 
-## Custom CSS
+Disable and re-enable the extension to reload this file.
 
-Create `~/.config/d2da/style.css` and disable/re-enable the extension to load it. Use GNOME Shell's Looking Glass inspector to find actor names and style classes.
+### Custom CSS
 
-## Blurred Background
+Create `~/.config/d2da/style.css`, then disable and re-enable the extension. Use GNOME Shell's Looking Glass inspector to find actor names and style classes.
 
-Dock background blur uses **Blur My Shell**. Install and enable that extension, enable its Dash to Dock integration, and enable this dock's blurred-background preference. The integration supports older blur geometry hooks and newer signal-driven dock surfaces. ImageMagick is not required.
+### Background blur and integrations
 
-## GNOME Shell 42-44
+For dock background blur, install and enable **Blur My Shell**, enable its Dash to Dock integration, and enable this dock's blurred-background preference. Both older geometry hooks and newer signal-driven dock surfaces are supported. ImageMagick is not required.
 
-Legacy transpilation also requires Python 3. Build a legacy archive without installing it:
+Compiz Magic Lamp Animation is also supported when installed.
 
-```sh
-make publish-g44
-```
+## Development
 
-Install the generated `dash2dock-lite@icedman.github.com.zip` using the GNOME CLI instructions above. For an existing installation, the update helper applies only when its settings schema matches.
+Work on `main`. Plain `make` or `make build` compiles schemas without installing anything. `make install` builds and installs the modern archive through the official CLI; `make g44` does the same for the legacy archive. Use the update helper when you need its backups and preference verification.
 
-For direct legacy development installation:
-
-```sh
-make g44
-```
-
-Log out and back in after replacing installed extension code.
-
-## Development and Testing
-
-Development uses `main`. The automated checks require Node.js 18 or newer, GJS, Python 3.9 or newer, Make, GLib schema tools, zip, and unzip:
+Automated checks require Node.js 18 or newer, GJS, Python 3.9 or newer, Make, GLib schema tools, zip, and unzip:
 
 ```sh
 npm test
@@ -198,30 +182,34 @@ npm run check
 glib-compile-schemas --strict --dry-run schemas
 ```
 
-See [tests/README.md](tests/README.md) for regression coverage and [CHECKLIST.md](CHECKLIST.md) for desktop release checks. [DESIGN.md](DESIGN.md) describes the current modules and lifecycle contracts. Automated tests cover activation, magnified input, zoom exit handling, lifecycle cleanup, settings, packaging, and upgrade rollback. Live compositor input, Shell compatibility, rendering, CPU use, and RAM use require verification in a GNOME desktop session.
+| Guide | Contents |
+| --- | --- |
+| [HACKING.md](HACKING.md) | Build commands, repository layout, and development workflow |
+| [DESIGN.md](DESIGN.md) | Modules, ownership, and lifecycle contracts |
+| [tests/README.md](tests/README.md) | Regression coverage and focused test commands |
+| [CHECKLIST.md](CHECKLIST.md) | Desktop release verification |
 
-## Bug Reporting
+Automated checks cover activation, input, lifecycle cleanup, settings, packaging, and upgrade rollback. Live input, rendering, Shell compatibility, CPU use, and RAM use require a GNOME desktop session.
 
-See [ERRORS.md](ERRORS.md) for troubleshooting and collecting diagnostics. Include:
+## Troubleshooting and bug reports
 
-* Distribution and version
-* GNOME Shell version and Wayland/X11 session type
-* Dash2Dock Animated version, dock position, and display scaling
-* Steps to reproduce, relevant settings, and screenshots when useful
+See [ERRORS.md](ERRORS.md) for diagnostics. Report fork-specific problems in [this fork's issue tracker](https://github.com/m-arson/dash2dock-lite/issues), including:
+
+* Distribution, GNOME Shell version, and Wayland/X11 session type
+* Extension version, dock position, display scaling, and relevant settings
+* Steps to reproduce and screenshots when useful
 * Other enabled extensions, especially integrations
 
-Watch the Shell journal for errors:
+Watch the Shell journal while reproducing the problem:
 
 ```sh
 journalctl /usr/bin/gnome-shell -f -o cat
 ```
 
-When investigating an extension conflict, repeat the steps with other extensions disabled. For performance reports, compare idle and stationary-hover CPU and memory before and after repeated hover, menu, and lock/unlock cycles. You can monitor the Shell process with:
-
-```sh
-top -d 0.5
-```
+For extension conflicts, repeat the steps with other extensions disabled. For performance reports, compare idle, stationary hover, and repeated interaction under the same conditions. Monitor the Shell process with `top -d 0.5` and record CPU and memory use.
 
 ## License and Attribution
 
-Originally authored by **icedman**, whose [upstream project](https://github.com/icedman/dash2dock-lite) is the basis of this fork. Original attribution, license notices, and third-party adaptation credits are retained. To support the original creator, use **[icedman's Buy Me a Coffee page](https://www.buymeacoffee.com/icedman)**. Distributed under the **GPL 3.0 License**; see [LICENSE](LICENSE).
+Originally authored by **icedman**. This fork retains the original project's attribution, license notices, and third-party adaptation credits. Historical upstream screenshots remain in `screenshots/`; the main image above shows this fork on a user's desktop.
+
+Distributed under the **GPL 3.0 License**; see [LICENSE](LICENSE). Visit [icedman's original project](https://github.com/icedman/dash2dock-lite) and **[support him on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**.
