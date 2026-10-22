@@ -407,6 +407,7 @@ export let Dock = GObject.registerClass(
     }
 
     undock() {
+      this._activeWindowPreview?.menu.close();
       this._destroyList();
       this._endAnimation();
       this._removeIconEffect();
@@ -717,7 +718,10 @@ export let Dock = GObject.registerClass(
     }
 
     _setDragState(dragging, icon = null) {
-      if (dragging) this._restoreIconInputs();
+      if (dragging) {
+        this._activeWindowPreview?.menu.close();
+        this._restoreIconInputs();
+      }
       this._dragging = dragging;
       this._dragged = dragging ? icon ?? this._dragged : null;
       this._icons = null;
@@ -1139,6 +1143,7 @@ export let Dock = GObject.registerClass(
       // and clear both references when custom items share the same menu.
       const appwell = c._appwell ?? c.child;
       const preview = appwell?._windowPreviewMenu;
+      if (this._activeWindowPreview?.menu === preview) this._activeWindowPreview = null;
       if (appwell) appwell._windowPreviewMenu = null;
       preview?.destroy();
       const menus = new Set([c._menu, appwell?._menu].filter(Boolean));
@@ -1868,6 +1873,15 @@ export let Dock = GObject.registerClass(
     }
 
     _endAnimation() {
+      // Browsing previews keeps the current zoom without an animation loop.
+      // Keep the movement-only pointer watch so leaving can settle it again.
+      if (!this._destroyed && !this._hidden && !this._dragging &&
+          this._activeWindowPreview?.menu.isOpen &&
+          this.extension.animate_icons_unmute !== false &&
+          (!this._monitor?.inFullscreen || this.extension._inOverview)) {
+        this._settleAnimation();
+        return;
+      }
       this._syncPointerWatch(false);
       if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return;
       if (this.extension.debug_visual) {
@@ -1989,6 +2003,63 @@ export let Dock = GObject.registerClass(
       ].some(actor => actor?._menu?.isOpen || actor?._windowPreviewMenu?.isOpen));
     }
 
+    _getWindowPreviewIcon(pointer) {
+      const state = this._activeWindowPreview;
+      if (!state?.menu.isOpen) {
+        this._activeWindowPreview = null;
+        return null;
+      }
+      const dismiss = () => {
+        if (this._activeWindowPreview === state) this._activeWindowPreview = null;
+        state.menu.close();
+      };
+      if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
+          this._hidden || this._dragging || state.appIcon._d2dlDestroying ||
+          (this._monitor?.inFullscreen && !this.extension._inOverview)) {
+        dismiss();
+        return null;
+      }
+      const icons = this._icons ?? [
+        ...(this.dash._box?.get_children() ?? []),
+        ...(this._extraIcons?.get_children() ?? []),
+      ];
+      const owner = icons.find(icon => (icon._appwell ?? icon.child) === state.appIcon);
+      const source = owner?._inputRect ?? actorRect(state.appIcon);
+      if (!owner?._icon || owner._d2dlDestroying || !source) {
+        dismiss();
+        return null;
+      }
+      const moved = pointer[0] !== state.initialPointer[0] || pointer[1] !== state.initialPointer[1];
+      // Real hover on another icon always wins over the preview's retained zoom.
+      if (moved && icons.some(icon => icon !== owner && !icon._d2dlDestroying &&
+          icon._inputRect && isInRect(icon._inputRect, pointer))) {
+        dismiss();
+        return null;
+      }
+      let inside = !moved || isInRect(source, pointer, 4) ||
+        state.menu.containsPoint(pointer[0], pointer[1]);
+      const panel = actorRect(state.menu.actor);
+      if (!inside && panel) {
+        // Connect the icon to its popup across the small normal-axis gap.
+        // A tall popup must not make every neighboring dock icon part of it.
+        const [x, y, width, height] = source;
+        const [px, py, pw, ph] = panel;
+        let bridge;
+        if (this._position === DockPosition.LEFT) {
+          bridge = [Math.min(x + width, px), y, Math.abs(px - x - width), height];
+        } else if (this._position === DockPosition.RIGHT) {
+          bridge = [Math.min(px + pw, x), y, Math.abs(x - px - pw), height];
+        } else if (this._position === DockPosition.TOP) {
+          bridge = [x, Math.min(y + height, py), width, Math.abs(py - y - height)];
+        } else {
+          bridge = [x, Math.min(py + ph, y), width, Math.abs(y - py - ph)];
+        }
+        inside = isInRect(bridge, pointer, 6 * (this._scaleFactor || 1));
+      }
+      if (!inside) dismiss();
+      return inside && this.extension.animate_icons_unmute !== false ? owner : null;
+    }
+
     _openWindowPreviewMenu(appIcon, side) {
       if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
           !appIcon || appIcon._d2dlDestroying || !appIcon.app?.get_windows) return false;
@@ -2010,8 +2081,21 @@ export let Dock = GObject.registerClass(
             },
             onOpenStateChanged: open => {
               if (!isCurrent()) return;
+              if (open) {
+                const previous = this._activeWindowPreview;
+                this._activeWindowPreview = {
+                  menu, appIcon, initialPointer: global.get_pointer().slice(0, 2),
+                };
+                if (previous && previous.menu !== menu) previous.menu.close();
+              } else if (this._activeWindowPreview?.menu === menu) {
+                this._activeWindowPreview = null;
+              }
+              this._beginAnimation();
               if (open && this.autohider?._enabled) this.autohider.show();
               this.autohider?._debounceCheckHide();
+            },
+            onPointerMotion: () => {
+              if (isCurrent()) this._beginAnimation();
             },
           });
           appIcon._windowPreviewMenu = menu;
@@ -2022,6 +2106,7 @@ export let Dock = GObject.registerClass(
         // rather than a reason to fall back to the title-only app menu.
         return wasOpen || menu.isOpen;
       } catch (err) {
+        if (this._activeWindowPreview?.menu === menu) this._activeWindowPreview = null;
         appIcon._windowPreviewMenu = null;
         try { menu?.destroy(); } catch {}
         console.error('Window previews:', err);
@@ -2177,7 +2262,13 @@ export let Dock = GObject.registerClass(
     _onScrollEvent(obj, evt) {
       this._lastScrollEvent = evt;
       let pointer = global.get_pointer();
-      let target = this._nearestIcon; // this._hoveredIcon;
+      // A preview can retain its source as the last animated target. Route
+      // a wheel event to the real icon under the pointer before the next frame.
+      let target = (this._icons ?? []).find(icon => icon._inputRect &&
+        isInRect(icon._inputRect, pointer)) ?? this._nearestIcon;
+      if (target && this._activeWindowPreview &&
+          target._appwell !== this._activeWindowPreview.appIcon)
+        this._activeWindowPreview.menu.close();
       // console.log(`${target == this._hoveredIcon}`);
       if (target) {
         if (this._scrollCounter < -2 || this._scrollCounter > 2)

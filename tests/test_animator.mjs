@@ -61,6 +61,7 @@ const timer = {
   },
   cancel(sequence) { this.sequences.delete(sequence); },
 };
+let pointer = [16, 16];
 const context = vm.createContext({
   console, St: {Icon: Actor}, Dot: Actor, DockItemDotsOverlay: Actor,
   DockItemBadgeOverlay: Actor,
@@ -69,7 +70,7 @@ const context = vm.createContext({
   Linear: {easeNone: (t, b, c, d) => b + c * t / d},
   Bounce: {easeOut: (t, b, c, d) => b + c * t / d},
   get_distance_sqr: (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2,
-  global: {get_pointer: () => [16, 16]},
+  global: {get_pointer: () => [...pointer]},
 });
 const source = readFileSync(new URL('../animator.js', import.meta.url), 'utf8')
   .replace(/^import\s[\s\S]*?;\n/gm, '').replace(/export /g, '');
@@ -93,6 +94,8 @@ let settles = 0;
 const inputSyncs = [];
 const pointerWatchStates = [];
 let inputRestores = 0;
+let previewIcon = null;
+const previewPointerReads = [];
 const dock = {
   extension, _icons: [icon], _iconSizeScaledDown: 32, _iconSize: 32,
   _scaleFactor: 1, _edge_distance: 0, _position: 'bottom', _separators: [],
@@ -104,6 +107,10 @@ const dock = {
   layout: () => true, isVertical: () => false,
   getMonitor() { return this._monitor; },
   _isWithinDash: () => within, _updateTransparenies() {},
+  _getWindowPreviewIcon(realPointer) {
+    previewPointerReads.push([...realPointer]);
+    return previewIcon;
+  },
   _debounceEndAnimation() { endRearms++; }, _beginAnimation() {},
   _settleAnimation() { settles++; },
   _syncIconInput(container) {
@@ -160,6 +167,71 @@ assert.ok(endRearms > 1, 'zoom keeps animation alive while settling');
 const outsideRearms = endRearms;
 for (let i = 0; i < 100; i++) animator.animate(16);
 assert.equal(endRearms, outsideRearms, 'resting icons remain idle');
+
+// A thumbnail chooser can extend far beyond the dock, especially on a
+// vertical edge. The real pointer must reach the ownership helper while the
+// visual hover follows the source icon instead of the distant thumbnail.
+within = false;
+previewIcon = icon;
+dock._position = 'left';
+dock.isVertical = () => true;
+pointer = [450, 500];
+const beforePreviewPositions = icon.positionReads;
+for (let i = 0; i < 250; i++) animator.animate(16);
+assert.deepEqual(previewPointerReads.at(-1), pointer,
+  'preview ownership receives the real pointer instead of a synthetic hover point');
+assert.equal(dock._nearestIcon, icon, 'an open preview retains its source as the visual hover');
+assert.ok(renderer.scale_x > 1, 'moving into a distant preview keeps its source icon zoomed');
+assert.equal(icon.positionReads - beforePreviewPositions, 250,
+  'holding a preview reuses the frame position read');
+const heldPreviewRearms = endRearms;
+const heldPreviewSettles = settles;
+for (let i = 0; i < 100; i++) animator.animate(16);
+assert.equal(endRearms, heldPreviewRearms,
+  'a stationary preview does not keep requesting frame work');
+assert.ok(settles > heldPreviewSettles,
+  'a stationary preview suspends animation without clearing the hover');
+assert.equal(pointerWatchStates.at(-1), true,
+  'a held preview retains pointer recovery so departure can wake settling');
+previewIcon = null;
+for (let i = 0; i < 250; i++) animator.animate(16);
+assert.equal(renderer.scale_x, 1,
+  'dismissing or leaving the preview settles its source back to normal');
+assert.equal(pointerWatchStates.at(-1), false,
+  'dismissed preview releases pointer recovery after settling');
+
+const anotherIcon = new Actor({x: 0, y: 64});
+anotherIcon._icon = new Actor({icon_name: 'other-app'});
+anotherIcon._icon.parent = new Actor();
+dock._icons.push(anotherIcon);
+pointer = [16, 80];
+within = true;
+animator.animate(16);
+assert.equal(dock._nearestIcon, anotherIcon,
+  'after dismissal the real pointer can immediately hover another app');
+dock._icons.pop();
+animator.animate(16);
+dock._position = 'bottom';
+dock.isVertical = () => false;
+
+// An already selected preview owner cannot override stronger state changes.
+for (const state of ['hidden', 'fullscreen', 'dragging', 'disabled']) {
+  previewIcon = icon;
+  within = false;
+  dock._hidden = state === 'hidden';
+  dock._monitor.inFullscreen = state === 'fullscreen';
+  dock._dragging = state === 'dragging';
+  extension.animate_icons_unmute = state !== 'disabled';
+  for (let i = 0; i < 250; i++) animator.animate(16);
+  assert.equal(dock._nearestIcon, null, `${state} takes priority over retained preview hover`);
+  assert.equal(renderer.scale_x, 1, `${state} does not leave a stale magnified preview icon`);
+}
+previewIcon = null;
+dock._hidden = false;
+dock._monitor.inFullscreen = false;
+dock._dragging = false;
+extension.animate_icons_unmute = true;
+pointer = [16, 16];
 
 extension.animation_fps = 0;
 within = true;

@@ -30,6 +30,7 @@ Use this checklist for each release. These are checks to perform, not a record t
 - Keep a sibling minimized while opening previews, selecting another window, and scrolling. Preview display alone must not restore it.
 - Use Show Desktop, then select each app through the dock. Verify a window returns, including when focus notifications are still pending.
 - Test previews at every dock edge, with many windows, long titles, unavailable surfaces, and changing/closing windows. Check scrolling, keyboard selection, Escape, outside-click dismissal, right-click actions, and cleanup on disable.
+- Browse previews without selecting: the source stays zoomed, crossing the gap works, and returning to another icon dismisses previews and lets its first click through. Move away, click elsewhere, press Escape, or re-click the source; no window should activate just from dismissal. Check that pointer opening preserves keyboard focus and stationary browsing stops frame work.
 - Scroll both directions across windows and workspaces; hold Ctrl to limit cycling to the current workspace. Check monitor filtering and native Ctrl-click/middle-click new-window actions.
 
 ## Autohide, services, and integrations

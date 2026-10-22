@@ -2,6 +2,12 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 107
+
+* Remove the preview chooser's modal input grab so outside mouse/touch clicks dismiss it and reach their target immediately, without choosing a window first.
+* Keep the source icon zoomed while browsing previews or crossing the narrow gap to them. Hovering another icon or moving away dismisses the previews without activation; Escape and a second source click also dismiss.
+* Retain idle suspension, keyboard navigation, X11 popup input tracking, and cleanup of preview and pointer listeners.
+
 ## Version 106
 
 * Show proportional window thumbnails and titles when clicking an active app with multiple windows. Selecting a preview activates only that window; minimized siblings remain minimized while previews are open.

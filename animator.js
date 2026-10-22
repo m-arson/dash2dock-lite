@@ -162,10 +162,22 @@ export let Animator = class {
       pointer[1] -= dock._iconSize * dock._scaleFactor;
     }
 
+    const previewIcon = dock._getWindowPreviewIcon?.(pointer);
+    const holdPreview = previewIcon && !dock._hidden && !dock._dragging &&
+      dock.extension.animate_icons_unmute &&
+      (!m.inFullscreen || dock.extension._inOverview);
+    const previewPosition = holdPreview ? previewIcon.get_transformed_position() : null;
+    if (holdPreview) {
+      // Keep the preview owner's zoom even far along a tall popup. Actual
+      // hover on another dock icon dismisses the preview before this point.
+      const [x, y] = previewPosition;
+      const offset = dock._iconSizeScaledDown * dock._scaleFactor / 2;
+      pointer = [x + offset, y + offset];
+    }
     let [px, py] = pointer;
 
     let vertical = dock.isVertical();
-    let isWithin = dock._isWithinDash([px, py]);
+    let isWithin = !!holdPreview || dock._isWithinDash([px, py]);
 
     if (m.inFullscreen && !dock.extension._inOverview) {
       isWithin = false;
@@ -193,7 +205,8 @@ export let Animator = class {
     let prevIcon = null;
     animateIcons.forEach((icon) => {
       if (!icon._icon) return;
-      let pos = icon.get_transformed_position();
+      let pos = icon === previewIcon && previewPosition
+        ? [...previewPosition] : icon.get_transformed_position();
 
       if (icon._found && !icon._handled) {
         icon._handled = true;

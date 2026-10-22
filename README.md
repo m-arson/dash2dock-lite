@@ -8,8 +8,9 @@ An animated desktop dock targeting GNOME Shell 46–51, based on [icedman's Dash
 
 ## Current Version
 
-Version **106** includes:
+Version **107** includes:
 
+* Freely dismissible previews: the source icon stays zoomed while you browse its previews. Move to another icon or away from the dock, click elsewhere, press Escape, or click the source icon again to dismiss without selecting a window. Clicking another icon works immediately.
 * A thumbnail chooser for apps with multiple windows: click the active app to see small window previews with titles, then select one to activate only that window. Right-click retains GNOME's app actions.
 * Reliable restore after Show Desktop or minimizing all windows: clicking an app activates one window through GNOME's normal window activation path.
 * Reliable edge reveal after autohiding: moving into the dock's former on-screen area during the hide animation no longer opens it before you reach the screen edge.
@@ -20,7 +21,7 @@ Version **106** includes:
 * Click targets that follow enlarged icons beyond the dock frame, and zoom recovery when leaving after a click.
 * Updated Blur My Shell integration, live settings updates, favorite reordering, and reduced idle animation and resource use.
 
-These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; the chooser and right-click app menu retain the app-wide window list. Preview resources are released when the chooser closes, and unavailable window surfaces show the app icon. Minimized windows remain minimized while their previews are displayed; their last available compositor contents may be shown. See the [changelog](CHANGELOG.md) for the full change list.
+These window actions are this fork's GNOME dock policy. Monitor filtering applies to click and scroll selection; the chooser and right-click app menu retain the app-wide window list. Opening previews leaves other icons and windows available and does not move keyboard focus. Preview resources are released when the chooser closes, and unavailable window surfaces show the app icon. Minimized windows remain minimized while their previews are displayed; their last available compositor contents may be shown. See the [changelog](CHANGELOG.md) for the full change list.
 
 ## Compatibility
 

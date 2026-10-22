@@ -31,6 +31,7 @@ For a report, describe the exact starting state and pointer/click/key sequence. 
 | Hidden dock reveals before reaching the edge | Record pressure sense, fullscreen/overlap state, and whether it occurs immediately after hiding. Include the monitor's dock edge and scaling. |
 | App does not return after Show Desktop | Record the shortcut, number of app windows, workspace/monitor, and whether a second click behaves differently. Normal selection should activate one window. |
 | Preview displays an app icon | This is the fallback when a compositor surface is missing or has invalid dimensions. Report the app/window state if it persists for an ordinary visible window. |
+| Previews block other icons or shrink their source while browsing | Version 107 keeps previews dismissible without a selection and retains source zoom. Include the dock edge, scaling, exact pointer path, input type, and whether the first click on another icon is delivered. |
 | Blur is absent or misplaced | Confirm Blur My Shell and its Dash to Dock integration are enabled, along with this dock's blur setting. Record both extension versions and enable order. |
 | Custom icons, CSS, or config are ignored | Check JSON syntax, the documented `~/.config/d2da/` paths, and disable/re-enable after editing. App-icon keys omit `.desktop`. |
 | Show Apps cannot move to the front on a vertical dock | This remains a layout limitation; the front-position option applies to horizontal docks. |

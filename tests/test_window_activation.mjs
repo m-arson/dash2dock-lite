@@ -7,10 +7,12 @@ const source = readFileSync(new URL('../dock.js', import.meta.url), 'utf8')
 const Shell = {AppState: {STOPPED: 0, STARTING: 1, RUNNING: 2}};
 const Clutter = {
   BUTTON_PRIMARY: 1, BUTTON_MIDDLE: 2, BUTTON_SECONDARY: 3,
+  ScrollDirection: {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3},
   ModifierType: {CONTROL_MASK: 1 << 2, SHIFT_MASK: 1, BUTTON2_MASK: 1 << 9},
   get_current_event: () => currentEvent,
 };
 let currentEvent = null;
+let pointer = [116, 116];
 let activeWorkspace;
 let overviewHides = 0;
 const Main = {
@@ -28,6 +30,10 @@ class WindowPreviewMenu {
     this.side = options.side;
     this.isOpen = false;
     this.destroyed = false;
+    this.rect = [150, 90, 240, 180];
+    this.actor = {visible: true,
+      get_transformed_position: () => this.rect.slice(0, 2),
+      get_transformed_size: () => this.rect.slice(2)};
     appIcon._previewInstances.push(this);
   }
   popup(side) {
@@ -43,6 +49,12 @@ class WindowPreviewMenu {
     return true;
   }
   setSide(side) { this.side = side; }
+  containsPoint(x, y) {
+    if (Array.isArray(x)) [x, y] = x;
+    const [left, top, width, height] = this.rect;
+    return this.isOpen && this.actor.visible !== false &&
+      x >= left && x < left + width && y >= top && y < top + height;
+  }
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
@@ -52,7 +64,11 @@ class WindowPreviewMenu {
   select(window) { this.close(); this.options.onActivate(window); }
 }
 const dependencies = {
-  Main, Shell, Clutter, WindowPreviewMenu, DashModule: {Dash: class {}},
+  Main, Shell, Clutter, WindowPreviewMenu,
+  isInRect: ([x, y, width, height], [px, py], margin = 0) =>
+    px >= x - margin && px < x + width + margin &&
+    py >= y - margin && py < y + height + margin,
+  DashModule: {Dash: class {}},
   GObject: {registerClass: (...args) => args.at(-1)},
   St: {Widget: class {}, Side: {BOTTOM: 'bottom', TOP: 'top', LEFT: 'left', RIGHT: 'right'}},
   Config: {PACKAGE_VERSION: '48'},
@@ -60,6 +76,7 @@ const dependencies = {
   global: {
     workspace_manager: {get_active_workspace: () => activeWorkspace},
     get_current_time: () => 1234,
+    get_pointer: () => [...pointer],
   },
 };
 const Dock = new Function(...Object.keys(dependencies), `${source}\nreturn Dock;`)(
@@ -70,11 +87,13 @@ const Dock = new Function(...Object.keys(dependencies), `${source}\nreturn Dock;
 // can: a regular click must never reach it after our single-window activation.
 function fixture(specs, options = {}) {
   currentEvent = null;
+  pointer = [116, 116];
   overviewHides = 0;
   Main.overview.visible = options.overviewVisible ?? false;
   const calls = [];
   const menuCallbacks = new Map();
   const autohideCalls = [];
+  const animationWakes = [];
   const windows = [];
   let showingDesktop = options.showDesktop ?? false;
   const focus = window => windows.forEach(w => { w.focused = w === window; });
@@ -129,6 +148,9 @@ function fixture(specs, options = {}) {
     _previewOptions: options,
     _previewInstances: [],
     _testCalls: calls,
+    visible: true,
+    get_transformed_position: () => [100, 100],
+    get_transformed_size: () => [32, 32],
     connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
     popupMenu(side) {
       calls.push(['popup', side]);
@@ -154,17 +176,22 @@ function fixture(specs, options = {}) {
     },
   };
   if (options.menuMissing) delete appwell.popupMenu;
-  const icon = {_icon: {}, _appwell: appwell, child: appwell, custom_icon: options.custom};
+  const icon = {_icon: {}, _appwell: appwell, child: appwell, custom_icon: options.custom,
+    visible: true, get_transformed_position: () => [100, 100],
+    get_transformed_size: () => [32, 32]};
   if (options.customMenu) {
     icon._menu = {isOpen: false,
       connectObject(signal, callback) { menuCallbacks.set(signal, callback); }};
   }
   const dock = Object.create(Dock.prototype);
   Object.assign(dock, {
-    extension: {multi_monitor_filter: options.filter ?? 0, multi_monitor_preference: 1},
+    extension: {multi_monitor_filter: options.filter ?? 0, multi_monitor_preference: 1,
+      animate_icons_unmute: true},
     _monitor: {index: 0},
     _position: options.position ?? 'bottom',
     _scrollCounter: 0,
+    _beginAnimation() { animationWakes.push('begin'); },
+    isVertical: () => ['left', 'right'].includes(options.position),
     autohider: {
       _enabled: true,
       show: () => autohideCalls.push('show'),
@@ -178,7 +205,7 @@ function fixture(specs, options = {}) {
   });
   dock._findIcons();
   return {
-    dock, windows, calls, appwell, workspaces, icon, menuCallbacks, autohideCalls,
+    dock, windows, calls, appwell, workspaces, icon, menuCallbacks, autohideCalls, animationWakes,
     isShowingDesktop: () => showingDesktop,
     click(button = Clutter.BUTTON_PRIMARY, modifiers = 0) {
       currentEvent = modifiers ? {get_state: () => modifiers} : null;
@@ -459,6 +486,129 @@ const previewNativeStateChanged = previewState.menuCallbacks.get('menu-state-cha
 previewNativeStateChanged(previewState.appwell, true);
 assert.equal(ownedPreview.isOpen, false, 'opening the native context menu dismisses thumbnails');
 
+// Pointer movement through a preview must never select a window. Keep the
+// source visually hovered while crossing the small gap, and release the
+// chooser immediately when the user returns to another app or leaves.
+for (const [position, panelRect, transit, panelPoint, outsideTransit] of [
+  ['left', [150, 40, 240, 260], [140, 116], [350, 270], [140, 270]],
+  ['right', [-160, 40, 240, 260], [90, 116], [-140, 270], [90, 270]],
+  ['top', [40, 150, 260, 240], [116, 140], [270, 350], [270, 140]],
+  ['bottom', [40, -160, 260, 240], [116, 90], [270, -140], [270, 90]],
+]) {
+  const freelyHovered = fixture([{focused: true}, {minimized: true}], {position});
+  freelyHovered.click();
+  const popup = freelyHovered.appwell._windowPreviewMenu;
+  popup.rect = panelRect;
+  assert.equal(freelyHovered.dock._getWindowPreviewIcon([116, 116]), freelyHovered.icon,
+    `${position}: the source icon remains active while its preview is open`);
+  assert.equal(freelyHovered.dock._getWindowPreviewIcon(transit), freelyHovered.icon,
+    `${position}: crossing the narrow source-to-preview gap retains zoom`);
+  assert.equal(freelyHovered.dock._getWindowPreviewIcon(panelPoint), freelyHovered.icon,
+    `${position}: the whole preview keeps its source active, including its distant end`);
+  assert.equal(popup.isOpen, true);
+  assert.equal(freelyHovered.dock._getWindowPreviewIcon(outsideTransit), null,
+    `${position}: a tall or wide preview does not create a broad invisible hover area`);
+  assert.equal(popup.isOpen, false, `${position}: leaving dismisses the preview without a choice`);
+  assert.equal(freelyHovered.dock._activeWindowPreview == null, true,
+    `${position}: dismissal releases preview ownership`);
+  assert.deepEqual(freelyHovered.calls, [['preview', position]],
+    `${position}: checking and dismissing previews never activates or minimizes a window`);
+}
+
+const switchApp = fixture([{focused: true}, {minimized: true}], {position: 'left'});
+switchApp.click();
+const sourcePopup = switchApp.appwell._windowPreviewMenu;
+const otherAppIcon = {visible: true, _icon: {},
+  _inputRect: [100, 164, 32, 32],
+  get_transformed_position: () => [100, 164], get_transformed_size: () => [32, 32]};
+switchApp.dock._icons.push(otherAppIcon);
+// Deliberately overlap the panel rectangle to ensure the real icon wins.
+sourcePopup.rect = [100, 90, 260, 180];
+assert.equal(switchApp.dock._getWindowPreviewIcon([116, 180]), null,
+  'hovering another app dismisses previews even when their rectangles overlap');
+assert.equal(sourcePopup.isOpen, false, 'another app is accessible without choosing a window');
+assert.deepEqual(switchApp.calls, [['preview', 'left']], 'switching icons does not activate a preview');
+
+for (const direction of Object.values(Clutter.ScrollDirection)) {
+  const immediateScroll = fixture([{focused: true}, {minimized: true}], {position: 'left'});
+  immediateScroll.click();
+  const oldPreview = immediateScroll.appwell._windowPreviewMenu;
+  const nextApp = {get_windows: () => []};
+  const nextIcon = {_icon: {}, _appwell: {app: nextApp}, _inputRect: [100, 164, 32, 32]};
+  immediateScroll.dock._icons.push(nextIcon);
+  // No animation or motion frame has updated the retained preview hover yet.
+  immediateScroll.dock._nearestIcon = immediateScroll.icon;
+  pointer = [116, 180];
+  const cycles = [];
+  immediateScroll.dock._cycleWindows = (app, event) => cycles.push({app, event});
+  const event = {get_scroll_direction: () => direction};
+  immediateScroll.dock._onScrollEvent(null, event);
+  assert.deepEqual(cycles, [{app: nextApp, event}],
+    'the first wheel event over another icon cycles the actual app under the pointer');
+  assert.equal(immediateScroll.dock._lastScrollObject, nextIcon,
+    'wheel ownership immediately follows the real pointer before an animation frame');
+  assert.equal(oldPreview.isOpen, false, 'scrolling another app dismisses the previous preview');
+  assert.equal(immediateScroll.dock._activeWindowPreview == null, true,
+    'scrolling another app releases retained preview ownership');
+  assert.deepEqual(immediateScroll.calls, [['preview', 'left']],
+    'switching the wheel target does not select or restore a previous preview window');
+}
+
+const keyboardPreview = fixture([{focused: true}, {minimized: true}]);
+pointer = [-200, -200];
+keyboardPreview.click(0);
+assert.equal(keyboardPreview.dock._getWindowPreviewIcon(pointer), keyboardPreview.icon,
+  'keyboard opening retains source hover until the real pointer moves');
+assert.equal(keyboardPreview.dock._getWindowPreviewIcon([-250, -200]), null,
+  'actual pointer departure can dismiss a keyboard-opened preview without selection');
+assert.deepEqual(keyboardPreview.calls, [['preview', 'bottom']]);
+
+for (const unavailable of ['hidden', 'fullscreen', 'dragging', 'disabled', 'destroyed', 'source-destroying']) {
+  const pending = fixture([{focused: true}, {minimized: true}]);
+  pending.click();
+  const popup = pending.appwell._windowPreviewMenu;
+  if (unavailable === 'hidden') pending.dock._hidden = true;
+  if (unavailable === 'fullscreen') pending.dock._monitor.inFullscreen = true;
+  if (unavailable === 'dragging') pending.dock._dragging = true;
+  if (unavailable === 'disabled') pending.dock.extension.animate_icons_unmute = false;
+  if (unavailable === 'destroyed') pending.dock._destroyed = true;
+  if (unavailable === 'source-destroying') pending.icon._d2dlDestroying = true;
+  assert.equal(pending.dock._getWindowPreviewIcon([116, 116]), null,
+    `${unavailable}: preview ownership cannot keep an unavailable source active`);
+  if (unavailable === 'disabled') {
+    assert.equal(popup.isOpen, true, 'disabling zoom keeps the nonmodal chooser usable');
+    popup.close();
+  }
+  assert.equal(pending.dock._activeWindowPreview == null, true,
+    `${unavailable}: dismissed preview ownership is released`);
+  assert.equal(popup.isOpen, false, `${unavailable}: preview closes without a selection`);
+  assert.deepEqual(pending.calls, [['preview', 'bottom']]);
+}
+
+const previewWake = fixture([{focused: true}, {minimized: true}]);
+previewWake.click();
+assert.equal(previewWake.animationWakes.length, 1, 'opening previews wakes the source zoom');
+previewWake.appwell._windowPreviewMenu.close();
+assert.equal(previewWake.animationWakes.length, 2, 'closing previews wakes normal hover settling');
+assert.equal(previewWake.dock._activeWindowPreview == null, true,
+  'ordinary dismissal clears the active preview owner');
+
+const idlePreview = fixture([{focused: true}, {minimized: true}]);
+idlePreview.click();
+idlePreview.icon._scale = 2;
+idlePreview.icon._targetScale = 2;
+const idleWatchStates = [];
+let idleSettles = 0;
+idlePreview.dock._syncPointerWatch = active => idleWatchStates.push(active);
+idlePreview.dock._settleAnimation = () => idleSettles++;
+idlePreview.dock._endAnimation();
+assert.equal(idleSettles, 1, 'animation timeout suspends a held preview without leaving frame work running');
+assert.equal(idlePreview.icon._scale, 2, 'animation timeout does not shrink the preview source');
+assert.equal(idlePreview.icon._targetScale, 2, 'animation timeout keeps the preview hover target');
+assert.deepEqual(idleWatchStates, [], 'preview timeout retains pointer recovery for its next movement');
+assert.equal(idlePreview.dock._icons.includes(idlePreview.icon), true,
+  'preview timeout keeps the active icon cache available for direct switching');
+
 const detachedWindow = fixture([{id: 'active', focused: true}, {id: 'gone', minimized: true}]);
 detachedWindow.click();
 const gone = detachedWindow.windows.pop();
@@ -489,6 +639,8 @@ cleanupPreview.dock._cleanupIcon(cleanupPreview.icon);
 assert.equal(removedPopup.destroyed, true, 'icon cleanup destroys its owned thumbnail popup');
 assert.equal(cleanupPreview.appwell._windowPreviewMenu, null, 'icon cleanup clears popup ownership');
 assert.equal(cleanupPreview.dock._hasOpenMenu(), false);
+assert.equal(cleanupPreview.dock._activeWindowPreview == null, true,
+  'icon cleanup releases the active preview owner even after removing its menu reference');
 const cleanupAutohide = [...cleanupPreview.autohideCalls];
 removedPopup.options.onActivate(cleanupPreview.windows[1]);
 removedPopup.options.onOpenStateChanged(true);

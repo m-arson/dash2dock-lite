@@ -34,7 +34,11 @@ Normal app clicks use this fork's activation policy: a focused single window min
 
 Activation uses `Meta.Window.activate()` on the active workspace and `Meta.Workspace.activate_with_focus()` when switching workspaces. These paths leave Show Desktop and restore the selected window and any required transient parents. Low-level `raise()` and `focus()` alone do not provide those semantics. Hidden or minimized windows cannot qualify for the focused-window minimize toggle.
 
-The preview chooser uses `PopupMenu` and `PopupBaseMenuItem` for native focus, activation, and dismissal. It clones existing compositor actors without showing or unminimizing their source windows. Missing surfaces use an app-icon fallback. Window changes update rows while open; closing releases clones and window/app connections. Destroying the app icon also destroys its chooser.
+The preview chooser uses `PopupMenu` and `PopupBaseMenuItem` for its actor layout and keyboard rows, without `PopupMenuManager` or a modal grab. An open-only stage listener dismisses on outside clicks and propagates the same event to its target. Pointer opening preserves keyboard focus; an arrow toward the popup enters its rows, and Escape dismisses it. Older X11 sessions track only the popup's input rectangle.
+
+While the pointer is in a preview or the narrow gap connecting it to its source, the animator uses the source icon's position to retain zoom. Real hover on another icon wins and dismisses the preview. The existing movement-only pointer watcher handles leaving a settled preview; holding zoom does not require a continuous animation timer. Hidden, fullscreen, drag, disabled-magnification, and teardown behavior take precedence.
+
+The chooser clones existing compositor actors without showing or unminimizing their source windows. Missing surfaces use an app-icon fallback. Window changes update rows while open; closing releases clones and window/app/input connections. Destroying the app icon also destroys its chooser.
 
 ## Work and lifetime rules
 

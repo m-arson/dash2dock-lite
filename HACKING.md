@@ -47,7 +47,7 @@ The scripts under `tests/` outside the automated runner include graphical experi
 ## Change and release review
 
 - Add a regression when changing a failure-prone behavior such as actor ownership, activation, timer cleanup, or async ordering. Verify the reported trigger rather than duplicating the implementation in a test.
-- Keep single-window toggling, thumbnail selection, Show Desktop restoration, native modifiers, magnified hit targets, and edge reveal consistent when changing nearby code.
+- Keep single-window toggling, thumbnail selection and free dismissal, retained preview hover, Show Desktop restoration, native modifiers, magnified hit targets, and edge reveal consistent when changing nearby code.
 - Check settings keys in `preferences/keys.js` and `schemas/` together. The update helper intentionally refuses schema changes; migrations need separate review.
 - Review all relevant Markdown, increment `metadata.json` when preparing a release, and record the final behavior in [CHANGELOG.md](CHANGELOG.md). Extension versions come from `metadata.json`, not the older npm package version.
 - Complete [CHECKLIST.md](CHECKLIST.md) and record what was tested. Build success and declared Shell targets do not establish rendering, compatibility, or measured performance.

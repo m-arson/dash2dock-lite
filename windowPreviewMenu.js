@@ -1,14 +1,28 @@
 'use strict';
 
 import Clutter from 'gi://Clutter';
+import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
 const animation = () => BoxPointer.PopupAnimation?.FULL ?? true;
+const hasInputRegion = parseInt(Config.PACKAGE_VERSION.split('.')[0]) < 50;
+
+const actorContains = (actor, target) => !!actor && !!target &&
+  (actor === target || !!actor.contains?.(target));
+
+const pointInActor = (actor, x, y) => {
+  if (!actor || actor.visible === false || ![x, y].every(Number.isFinite)) return false;
+  const [left, top] = actor.get_transformed_position();
+  const [width, height] = actor.get_transformed_size();
+  return [left, top, width, height].every(Number.isFinite) && width > 0 && height > 0 &&
+    x >= left && x < left + width && y >= top && y < top + height;
+};
 
 const disconnectAll = connections => {
   for (const [object, id] of connections.splice(0)) {
@@ -25,14 +39,16 @@ const connect = (connections, object, signal, callback) => {
   connections.push([object, object.connect(signal, callback)]);
 };
 
-// PopupMenu provides the same focus navigation, Escape/outside-click dismissal
-// and theme as the native app menu. Only its window rows are replaced here.
+// Reuse native menu rows, focus navigation and themes without its modal menu
+// manager: a preview must leave other dock buttons and application windows
+// available on the first click, even when no preview was selected.
 export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
   constructor(appIcon, {
     side = St.Side.TOP,
     getWindows = () => appIcon.app.get_windows(),
     onActivate = () => {},
     onOpenStateChanged = () => {},
+    onPointerMotion = () => {},
   } = {}) {
     super(appIcon, 0.5, side);
 
@@ -40,9 +56,12 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
     this._getWindows = getWindows;
     this._onActivate = onActivate;
     this._onOpenStateChanged = onOpenStateChanged;
+    this._onPointerMotion = onPointerMotion;
     this._rows = new Map();
     this._appConnections = [];
     this._sourceConnections = [];
+    this._inputConnections = [];
+    this._inputTracked = false;
     this._removedWindows = new Set();
     this._deadSources = new WeakSet();
     this._side = side;
@@ -67,20 +86,97 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
 
     Main.uiGroup.add_child(this.actor);
     this.actor.hide();
-    this._menuManager = new PopupMenu.PopupMenuManager(appIcon);
-    this._menuManager.addMenu(this);
 
     this.connect('open-state-changed', (_menu, open) => {
-      if (!open) this._releasePreviews();
+      if (open) this._watchInput();
+      else this._releasePreviews();
       this._onOpenStateChanged(open);
     });
     connect(this._sourceConnections, appIcon, 'destroy', () => this.destroy());
   }
 
-  // The app button's own activate handler opens the chooser for Enter/Space.
-  // A second source-key handler would race its native app menu handler.
-  _onKeyPress() {
+  // The app button handles Enter/Space itself. Only the arrow toward an already
+  // open preview moves keyboard focus into its native, accessible window rows.
+  _onKeyPress(_actor, event) {
+    if (!this.isOpen || !event || !this.sourceActor?.reactive) return Clutter.EVENT_PROPAGATE;
+    let state = event.get_state();
+    state &= ~Clutter.ModifierType.LOCK_MASK;
+    state &= ~Clutter.ModifierType.MOD2_MASK;
+    state &= Clutter.ModifierType.MODIFIER_MASK;
+    if (state) return Clutter.EVENT_PROPAGATE;
+    const key = {
+      [St.Side.TOP]: Clutter.KEY_Down,
+      [St.Side.BOTTOM]: Clutter.KEY_Up,
+      [St.Side.LEFT]: Clutter.KEY_Right,
+      [St.Side.RIGHT]: Clutter.KEY_Left,
+    }[this._boxPointer.arrowSide ?? this._side];
+    if (event.get_key_symbol() === key && key !== undefined) {
+      this.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
+      return Clutter.EVENT_STOP;
+    }
     return Clutter.EVENT_PROPAGATE;
+  }
+
+  containsPoint(x, y) {
+    if (Array.isArray(x)) [x, y] = x;
+    return this.isOpen && pointInActor(this.actor, x, y);
+  }
+
+  _watchInput() {
+    if (this._inputConnections.length) return;
+    // GNOME 50 removed X11 input-region parameters. On older X11 sessions the
+    // popup needs just its own rectangle, rather than a full-stage modal grab.
+    if (hasInputRegion && !Meta.is_wayland_compositor() &&
+        Main.layoutManager.trackChrome && Main.layoutManager.untrackChrome) {
+      Main.layoutManager.trackChrome(this.actor, {
+        affectsInputRegion: true, affectsStruts: false, trackFullscreen: false,
+      });
+      this._inputTracked = true;
+    }
+    connect(this._inputConnections, global.stage, 'captured-event',
+      (_stage, event) => this._onCapturedEvent(event));
+  }
+
+  _onCapturedEvent(event) {
+    if (!this.isOpen) return Clutter.EVENT_PROPAGATE;
+    const type = event.type();
+    if (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN) {
+      const target = global.stage.get_event_actor?.(event) ?? event.get_source?.();
+      let inside = actorContains(this.actor, target) || actorContains(this.sourceActor, target);
+      if (!target) {
+        const [x, y] = event.get_coords();
+        inside = this.containsPoint(x, y) || pointInActor(this.sourceActor, x, y);
+      }
+      if (!inside) this.close(animation());
+      // In particular, do not consume the click that closes the preview. The
+      // other app icon/window must receive that same mouse or touch press.
+    } else if (type === Clutter.EventType.KEY_PRESS) {
+      const focus = global.stage.get_key_focus();
+      const sourceFocused = actorContains(this.sourceActor, focus);
+      if (event.get_key_symbol() === Clutter.KEY_Escape) {
+        const ownsFocus = actorContains(this.actor, focus) || sourceFocused;
+        this.close(animation());
+        // Pointer previews keep focus in the previous app. Escape still
+        // cancels the preview, while remaining available to that app too.
+        return ownsFocus ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+      }
+      // Capture this before the source's pre-existing native app-menu key
+      // handler: otherwise the same arrow could open that menu first.
+      if (sourceFocused && this._onKeyPress(this.sourceActor, event) === Clutter.EVENT_STOP)
+        return Clutter.EVENT_STOP;
+    } else if ([Clutter.EventType.MOTION, Clutter.EventType.ENTER,
+      Clutter.EventType.LEAVE].includes(type)) {
+      this._onPointerMotion(event.get_coords());
+    }
+    return Clutter.EVENT_PROPAGATE;
+  }
+
+  _releaseInput() {
+    disconnectAll(this._inputConnections);
+    if (this._inputTracked) {
+      this._inputTracked = false;
+      Main.layoutManager.untrackChrome(this.actor);
+    }
   }
 
   setSide(side) {
@@ -101,7 +197,6 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
       return false;
     }
     this.open(animation());
-    this._menuManager?.ignoreRelease?.();
     return this.isOpen;
   }
 
@@ -345,6 +440,7 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
 
   _releasePreviews() {
     this._watching = false;
+    this._releaseInput();
     disconnectAll(this._appConnections);
     for (const row of this._rows.values()) this._removeRow(row);
     this._removedWindows.clear();
@@ -357,8 +453,6 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
     this.close(animation());
     this._releasePreviews();
     disconnectAll(this._sourceConnections);
-    this._menuManager?.removeMenu(this);
-    this._menuManager = null;
     super.destroy();
     this._destroyed = true;
     this._destroying = false;
@@ -366,6 +460,7 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
     this._getWindows = () => [];
     this._onActivate = () => {};
     this._onOpenStateChanged = () => {};
+    this._onPointerMotion = () => {};
     this._scrollView = null;
   }
 };
