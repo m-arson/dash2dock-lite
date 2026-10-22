@@ -22,6 +22,7 @@ Use this checklist for each release. These are checks to perform, not a record t
 - Click, move away immediately, and confirm zoom settles without returning the pointer to the dock. Also test stationary hover and disabled magnification.
 - Reorder favorites forward/backward; insert at the start, middle, and end; cancel a drag; change running apps during a drag; and drop into an empty favorites-only dock.
 - Check Show Apps with mouse, touch, and keyboard: hover label, opening the app grid, closing it on a second click, and its optional horizontal front position.
+- Right-click native apps and custom launchers at every edge, with normal and magnified icons. Verify menus open right of a left dock, left of a right dock, below a top dock, and above a bottom dock, anchored to the clicked icon. Reopen an existing menu after changing the dock position and repeat in a right-to-left layout.
 
 ## Window activation and previews
 

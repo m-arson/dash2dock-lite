@@ -92,6 +92,29 @@ function fixture(specs, options = {}) {
   Main.overview.visible = options.overviewVisible ?? false;
   const calls = [];
   const menuCallbacks = new Map();
+  const menuOpenSnapshots = [];
+  const pointerUpdates = [];
+  const createMenu = requestedSide => {
+    // Native PopupMenu mirrors horizontal arrow sides in RTL at construction.
+    // A dock edge is physical, so the menu must be corrected before opening.
+    const physicalSide = options.rtl && ['left', 'right'].includes(requestedSide)
+      ? ({left: 'right', right: 'left'})[requestedSide] : requestedSide;
+    const menu = {
+      isOpen: false, _arrowSide: physicalSide,
+      _boxPointer: {
+        _arrowSide: physicalSide, _userArrowSide: physicalSide,
+        updateArrowSide(side) { this._arrowSide = side; pointerUpdates.push(['side', side]); },
+        queue_relayout() { pointerUpdates.push(['layout']); },
+      },
+      open() {
+        menuOpenSnapshots.push({menu: this._arrowSide, arrow: this._boxPointer._arrowSide,
+          requested: this._boxPointer._userArrowSide});
+        this.isOpen = options.menuOpens !== false;
+      },
+      connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
+    };
+    return menu;
+  };
   const autohideCalls = [];
   const animationWakes = [];
   const windows = [];
@@ -154,14 +177,27 @@ function fixture(specs, options = {}) {
     connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
     popupMenu(side) {
       calls.push(['popup', side]);
-      this._menu ??= {isOpen: false};
-      this._menu.isOpen = options.menuOpens !== false;
+      if (options.nativeMenu) {
+        // Older DashIcons always construct BOTTOM; current AppIcons read a
+        // side property. Neither implementation accepts a popupMenu argument.
+        this._menu ??= createMenu(options.nativeMenu === 'property'
+          ? this._popupMenuSide : 'bottom');
+        menuCallbacks.get('menu-state-changed')?.(this, true);
+        this._menu.open();
+      } else {
+        this._menu ??= {isOpen: false};
+        this._menu.isOpen = options.menuOpens !== false;
+      }
       // This is Shell's real return contract, including a successful open.
       return false;
     },
     activate(button) {
       assert.equal(this, appwell, 'native activation retains the button receiver');
       calls.push(['native', button]);
+      if (options.nativeMenu && button === Clutter.BUTTON_SECONDARY) {
+        this.popupMenu();
+        return;
+      }
       if (options.custom) {
         calls.push(['custom-launch']);
       } else if (app.state === Shell.AppState.RUNNING && app.can_open_new_window() &&
@@ -180,8 +216,7 @@ function fixture(specs, options = {}) {
     visible: true, get_transformed_position: () => [100, 100],
     get_transformed_size: () => [32, 32]};
   if (options.customMenu) {
-    icon._menu = {isOpen: false,
-      connectObject(signal, callback) { menuCallbacks.set(signal, callback); }};
+    icon._menu = createMenu('bottom');
   }
   const dock = Object.create(Dock.prototype);
   Object.assign(dock, {
@@ -206,6 +241,7 @@ function fixture(specs, options = {}) {
   dock._findIcons();
   return {
     dock, windows, calls, appwell, workspaces, icon, menuCallbacks, autohideCalls, animationWakes,
+    menuOpenSnapshots, pointerUpdates,
     isShowingDesktop: () => showingDesktop,
     click(button = Clutter.BUTTON_PRIMARY, modifiers = 0) {
       currentEvent = modifiers ? {get_state: () => modifiers} : null;
@@ -350,6 +386,105 @@ for (const position of ['bottom', 'top', 'left', 'right']) {
   assert.equal(fallback.appwell._menu._boxPointer._userArrowSide, position,
     'an existing native pointer retains its requested side after allocation flips');
   assert.deepEqual(pointerCalls, [['side', position], ['layout']]);
+}
+
+// The right-click path bypasses our primary-button chooser. Exercise the
+// native lazy menu sequence: construct, emit menu-state-changed, then open.
+// Its first visible allocation must face away from the selected dock edge.
+for (const position of ['bottom', 'top', 'left', 'right']) {
+  for (const nativeMenu of ['legacy', 'property']) {
+    const contextMenu = fixture([{id: 'window'}], {position, nativeMenu});
+    assert.equal(contextMenu.appwell._menu, undefined, 'side setup keeps native menus lazy');
+    assert.equal(contextMenu.appwell._popupMenuSide, position,
+      'native AppIcons receive their side before they can create a menu');
+    contextMenu.click(Clutter.BUTTON_SECONDARY);
+    assert.deepEqual(contextMenu.menuOpenSnapshots, [
+      {menu: position, arrow: position, requested: position},
+    ], `${nativeMenu}, ${position}: right-click opens on the dock-facing physical side immediately`);
+    assert.deepEqual(ids(contextMenu, 'native'), [Clutter.BUTTON_SECONDARY],
+      'context-menu clicks retain native activation handling');
+    assert.deepEqual(ids(contextMenu, 'focus'), [], 'opening a context menu never focuses a window');
+    assert.deepEqual(ids(contextMenu, 'restore'), [], 'opening a context menu never restores a window');
+    assert.equal(contextMenu.appwell._previewInstances.length, 0,
+      'right-click never substitutes a thumbnail chooser');
+  }
+}
+
+for (const position of ['left', 'right']) {
+  const rtlMenu = fixture([{id: 'window'}], {position, nativeMenu: 'property', rtl: true});
+  rtlMenu.click(Clutter.BUTTON_SECONDARY);
+  assert.deepEqual(rtlMenu.menuOpenSnapshots, [
+    {menu: position, arrow: position, requested: position},
+  ], `${position}: RTL construction cannot reverse the physical dock side`);
+}
+
+for (const nativeMenu of ['legacy', 'property']) {
+  const directMenu = fixture([{id: 'window'}], {position: 'bottom', nativeMenu});
+  const cachedIcons = directMenu.dock._icons;
+  directMenu.dock._position = 'left';
+  // Keyboard popup keys and long presses call popupMenu() directly, without
+  // going through activate() or a dock redisplay first.
+  directMenu.appwell.popupMenu();
+  const popup = directMenu.appwell._menu;
+  assert.equal(directMenu.dock._icons, cachedIcons, 'direct menu opening uses the existing icon cache');
+  assert.deepEqual(directMenu.menuOpenSnapshots, [
+    {menu: 'left', arrow: 'left', requested: 'left'},
+  ], `${nativeMenu}: pre-open state handles a dock move before lazy menu creation`);
+  popup.isOpen = false;
+  directMenu.menuCallbacks.get('menu-state-changed')(directMenu.appwell, false);
+  directMenu.dock._position = 'right';
+  directMenu.appwell.popupMenu();
+  assert.equal(directMenu.appwell._menu, popup, 'direct menu opening reuses the lazy popup');
+  assert.deepEqual(directMenu.menuOpenSnapshots.at(-1),
+    {menu: 'right', arrow: 'right', requested: 'right'},
+    `${nativeMenu}: pre-open state handles a dock move without redisplay for an existing menu`);
+  assert.deepEqual(ids(directMenu, 'native'), [], 'keyboard/long-press popup never invokes activation');
+  assert.deepEqual(ids(directMenu, 'focus'), [], 'direct popup leaves the application window focus alone');
+}
+
+const movedMenu = fixture([{id: 'window'}], {position: 'left', nativeMenu: 'legacy'});
+movedMenu.click(Clutter.BUTTON_SECONDARY);
+const reusedNativeMenu = movedMenu.appwell._menu;
+for (const position of ['top', 'right', 'bottom', 'left']) {
+  reusedNativeMenu.isOpen = false;
+  movedMenu.menuCallbacks.get('menu-state-changed')(movedMenu.appwell, false);
+  movedMenu.dock._position = position;
+  movedMenu.dock._icons = null;
+  movedMenu.dock._findIcons();
+  assert.equal(reusedNativeMenu.isOpen, false, 'redisplay does not open a closed native menu');
+  assert.equal(movedMenu.appwell._menu, reusedNativeMenu, 'dock moves reuse the owned native menu');
+  movedMenu.click(Clutter.BUTTON_SECONDARY);
+  assert.deepEqual(movedMenu.menuOpenSnapshots.at(-1),
+    {menu: position, arrow: position, requested: position},
+    `${position}: a reused menu follows the new dock edge`);
+}
+reusedNativeMenu.isOpen = false;
+const openedBeforeClosingSignal = movedMenu.menuOpenSnapshots.length;
+movedMenu.menuCallbacks.get('menu-state-changed')(movedMenu.appwell, false);
+assert.equal(reusedNativeMenu.isOpen, false, 'closing notifications never reopen a native menu');
+assert.equal(movedMenu.menuOpenSnapshots.length, openedBeforeClosingSignal,
+  'closing notifications do not call the native menu open method');
+
+for (const position of ['bottom', 'top', 'left', 'right']) {
+  const eagerMenu = fixture([], {custom: true, customMenu: true, position});
+  const popup = eagerMenu.icon._menu;
+  assert.equal(popup.isOpen, false, 'eager custom menu orientation keeps the popup closed');
+  assert.deepEqual([popup._arrowSide, popup._boxPointer._arrowSide,
+    popup._boxPointer._userArrowSide], [position, position, position],
+  `${position}: eager custom menus are oriented during icon setup`);
+  // Custom launchers emit PopupMenu's own state signal, rather than AppIcon's.
+  eagerMenu.dock._position = position === 'left' ? 'right' : 'left';
+  popup.isOpen = true;
+  eagerMenu.menuCallbacks.get('open-state-changed')(popup, true);
+  const expectedSide = eagerMenu.dock._position;
+  assert.deepEqual([popup._arrowSide, popup._boxPointer._arrowSide,
+    popup._boxPointer._userArrowSide], [expectedSide, expectedSide, expectedSide],
+  'an already-created custom menu follows the current dock edge on opening');
+  popup.isOpen = false;
+  eagerMenu.menuCallbacks.get('open-state-changed')(popup, false);
+  assert.equal(popup.isOpen, false, 'custom menu closing remains a dismissal');
+  assert.deepEqual(eagerMenu.menuOpenSnapshots, [], 'state notifications do not activate or open menus');
+  assert.deepEqual(eagerMenu.calls, [], 'orienting custom menus never launches their backing app');
 }
 
 for (const options of [{menuMissing: true}, {menuOpens: false}]) {
@@ -782,4 +917,4 @@ destroyingCycle.dock.dash._d2dlDestroying = true;
 assert.equal(destroyingCycle.scroll(), false);
 assert.deepEqual(destroyingCycle.calls, [], 'dash teardown cannot cycle or restore windows');
 
-console.log('Window activation regressions passed (toggle, thumbnail selection, popup ownership, autohide signals, overview, Show Desktop, MRU, filtered single-window cycling, teardown, native shortcuts)');
+console.log('Window activation regressions passed (toggle, thumbnail selection, native context-menu edges, popup ownership, autohide signals, overview, Show Desktop, MRU, filtered single-window cycling, teardown, native shortcuts)');

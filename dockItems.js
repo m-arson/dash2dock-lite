@@ -251,6 +251,7 @@ export const DockIcon = GObject.registerClass(
       this.fake_release();
       let container = this.get_parent();
       if (container?._menu) {
+        container.dock?._syncAppMenuSide(this, container._menu);
         container._menu.popup();
         return container._menu;
       }
@@ -321,7 +322,9 @@ export const DockItemContainer = GObject.registerClass(
 
       // menu
       if (desktopApp) {
-        this._menu = new DockItemMenu(this, St.Side.TOP, {
+        // Use the transformed native button so the popup follows zoomed
+        // icons rather than their unchanged layout container.
+        this._menu = new DockItemMenu(dashIcon, St.Side.TOP, {
           desktopApp,
         });
         this._menu.item = this;

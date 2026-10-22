@@ -8,8 +8,9 @@ An animated desktop dock targeting GNOME Shell 46–51, based on [icedman's Dash
 
 ## Current Version
 
-Version **107** includes:
+Version **108** includes:
 
+* Right-click menus open toward the desktop beside the clicked icon: right of a left dock, left of a right dock, below a top dock, and above a bottom dock. Menus follow the icon's magnified position, including custom launchers.
 * Freely dismissible previews: the source icon stays zoomed while you browse its previews. Move to another icon or away from the dock, click elsewhere, press Escape, or click the source icon again to dismiss without selecting a window. Clicking another icon works immediately.
 * A thumbnail chooser for apps with multiple windows: click the active app to see small window previews with titles, then select one to activate only that window. Right-click retains GNOME's app actions.
 * Reliable restore after Show Desktop or minimizing all windows: clicking an app activates one window through GNOME's normal window activation path.

@@ -2,6 +2,11 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 108
+
+* Position right-click app menus toward the desktop from the clicked icon at every dock edge, including native app actions and custom launchers. Anchor menus to the actual icon button so placement follows its magnification.
+* Refresh menu geometry before opening, including reused menus after changing the dock position and menus in right-to-left layouts.
+
 ## Version 107
 
 * Remove the preview chooser's modal input grab so outside mouse/touch clicks dismiss it and reach their target immediately, without choosing a window first.

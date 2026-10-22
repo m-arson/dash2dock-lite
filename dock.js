@@ -1291,11 +1291,19 @@ export let Dock = GObject.registerClass(
         if (c._grid) {
           c._grid.style = 'background: none !important;';
         }
+        if (c._appwell) {
+          this._syncAppMenuSide(c._appwell, c._menu ?? c._appwell._menu);
+        }
         if (c._appwell && !c._appwell._activate) {
           const onMenuStateChanged = (_menu, open) => {
             if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
                 c._d2dlDestroying) return;
-            if (open) c._appwell?._windowPreviewMenu?.close();
+            if (open) {
+              // Native DashIcon can ignore popupMenu's side argument. Its
+              // menu-state signal runs after lazy creation, before open().
+              this._syncAppMenuSide(c._appwell, c._menu ?? c._appwell?._menu);
+              c._appwell?._windowPreviewMenu?.close();
+            }
             if (open && this.autohider?._enabled) this.autohider.show();
             this.autohider?._debounceCheckHide();
           };
@@ -1992,6 +2000,31 @@ export let Dock = GObject.registerClass(
       });
     }
 
+    _getMenuSide() {
+      return {
+        [DockPosition.BOTTOM]: St.Side.BOTTOM,
+        [DockPosition.TOP]: St.Side.TOP,
+        [DockPosition.LEFT]: St.Side.LEFT,
+        [DockPosition.RIGHT]: St.Side.RIGHT,
+      }[this._position] ?? St.Side.BOTTOM;
+    }
+
+    _syncAppMenuSide(appIcon, menu = appIcon?._menu) {
+      if (!appIcon) return;
+      const side = this._getMenuSide();
+      // Newer Shell reads this property; older DashIcon overrides ignore
+      // the argument and create a bottom-arrow menu instead.
+      appIcon._popupMenuSide = side;
+      const pointer = menu?._boxPointer;
+      if (!pointer || (menu._arrowSide === side && pointer._userArrowSide === side)) return;
+      // Keep physical dock edges in RTL too. Updating only the drawn side
+      // lets BoxPointer restore its old requested side during allocation.
+      menu._arrowSide = side;
+      pointer._userArrowSide = side;
+      pointer.updateArrowSide?.(side);
+      pointer.queue_relayout?.();
+    }
+
     _hasOpenMenu() {
       if (this._destroyed || !this.dash || this.dash._d2dlDestroying) return false;
       const icons = this._icons ?? [
@@ -2148,27 +2181,15 @@ export let Dock = GObject.registerClass(
           if (focused.minimized) focused.unminimize();
           this._raiseAndFocus(focused);
         } else if (appIcon) {
-          const side = {
-            [DockPosition.BOTTOM]: St.Side.BOTTOM,
-            [DockPosition.TOP]: St.Side.TOP,
-            [DockPosition.LEFT]: St.Side.LEFT,
-            [DockPosition.RIGHT]: St.Side.RIGHT,
-          }[this._position] ?? St.Side.BOTTOM;
+          const side = this._getMenuSide();
           if (this._openWindowPreviewMenu(appIcon, side)) return 'chooser';
           // Keep the native window list usable if previews cannot be opened.
           if (!appIcon.popupMenu) return true;
-          // Shell 50 reads this property; older versions accept the argument.
-          appIcon._popupMenuSide = side;
+          this._syncAppMenuSide(appIcon);
           appIcon.popupMenu(side);
-          // A right-click may already have created this menu on another
-          // side. Preserve the native pointer's requested side across flips.
+          // Also support icons without a menu-state signal in the fallback.
           const menu = appIcon._menu;
-          if (menu?._boxPointer) {
-            menu._arrowSide = side;
-            menu._boxPointer._userArrowSide = side;
-            menu._boxPointer.updateArrowSide?.(side);
-            menu._boxPointer.queue_relayout?.();
-          }
+          this._syncAppMenuSide(appIcon, menu);
           // popupMenu() returns false even when it opens successfully.
           if (menu?.isOpen) return 'chooser';
         }

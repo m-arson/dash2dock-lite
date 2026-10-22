@@ -156,6 +156,77 @@ function openList() {
 }
 
 {
+  const calls = [];
+  class NativeDashIcon extends Widget {
+    _init(app) { this.app = app; this._dot = {visible: true}; }
+    connectObject() {}
+    get_parent() { return this.parent; }
+    _removeMenuTimeout() { calls.push('remove-timeout'); }
+    fake_release() { calls.push('release'); }
+  }
+  class NativeDashItemContainer extends Widget {
+    set_scale() {}
+    setChild(child) { this.child = child; this.add_child(child); }
+    setLabelText(text) { this.labelText = text; }
+  }
+  class NativePopupMenu {
+    constructor(sourceActor, alignment, side) {
+      this.sourceActor = sourceActor;
+      this.side = side;
+      this.actor = new Widget();
+    }
+    addAction() { return {}; }
+    open() { calls.push('open'); }
+    close() {}
+    destroy() { this.actor.destroy(); }
+  }
+  class NativeMenuManager {
+    addMenu() {}
+    removeMenu() {}
+    ignoreRelease() { calls.push('ignore-release'); }
+  }
+  const {DockIcon, DockItemContainer} = loadClass('dockItems.js',
+    '({DockIcon, DockItemContainer})', {
+      GObject: {registerClass(_metadata, Class) {
+        return class extends Class {
+          constructor(...args) { super(); this._init(...args); }
+        };
+      }},
+      DashIcon: NativeDashIcon, DashItemContainer: NativeDashItemContainer,
+      PopupMenu: {PopupMenu: NativePopupMenu, PopupMenuManager: NativeMenuManager},
+      Main: {uiGroup: new Widget()}, BoxPointer: {PopupAnimation: {FULL: 'full'}},
+      St: {Widget, Side: {TOP: 'top'}}, Gio: {DesktopAppInfo: {}},
+      Clutter: {get_default_text_direction: () => 'ltr', TextDirection: {RTL: 'rtl'}},
+    });
+  const desktopApp = {list_actions: () => []};
+  const app = {get_app_info: () => desktopApp, get_name: () => 'Files'};
+  const container = new DockItemContainer({app});
+  const button = container.child;
+  assert.ok(button instanceof DockIcon);
+  assert.equal(container._menu.sourceActor, button,
+    'custom context menus anchor to the transformed native icon button');
+  assert.equal(button._menu, container._menu,
+    'native button and custom container share the same context menu');
+  container.dock = {_syncAppMenuSide(icon, menu) {
+    assert.equal(icon, button);
+    assert.equal(menu, container._menu);
+    calls.push('sync-side');
+  }};
+  assert.equal(button.popupMenu(), container._menu,
+    'the native popup entry retains its custom menu return contract');
+  assert.deepEqual(calls, ['remove-timeout', 'release', 'sync-side', 'open', 'ignore-release'],
+    'custom context popup synchronizes its dock side before opening');
+  calls.length = 0;
+  const menu = container._menu;
+  container._menu = null;
+  assert.equal(button.popupMenu(), null);
+  assert.deepEqual(calls, ['remove-timeout', 'release'],
+    'missing custom menus still release native press state without opening');
+  container._menu = menu;
+  container.destroy();
+}
+
+{
   const original = function () { return this.value; };
   const target = {getIcon: original, value: 'native geometry'};
   const Main = {extensionManager: {lookup: uuid =>

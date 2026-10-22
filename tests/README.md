@@ -18,6 +18,7 @@ The tests exercise production code with small Shell UI fakes, plus real GLib tim
 | --- | --- |
 | Animation and layout | Finite geometry, zoom/bounce settling, stable layout reuse, idle subscription removal, and indicator allocation/release. |
 | Input and dragging | Magnified native hit bounds at every edge, scaled parents/pivots, X11 tracking, drag transform restoration, missed exits after click grabs, pointer-watch cleanup, favorite insertion/races, and empty native Dash drops. |
+| Context-menu placement | Inward opening at every dock edge, actual icon-button anchoring, and refreshed geometry for reused menus after position changes, including right-to-left layouts. |
 | App activation | Single-window minimizing, recent-window selection, restoring one minimized window, Show Desktop/stale-focus recovery, monitor/workspace filtering, and native modifier/custom-launcher fallbacks. |
 | Window previews | Proportional compositor clones, minimized-window preservation, unavailable-surface fallback, selecting one window, bounded scrolling, keyboard visibility, title/window changes, no modal manager, first-click delivery to outside targets, Escape/source dismissal, and releasing clones/input/window signals on close or destruction. |
 | Preview hover | Retained source zoom over tall previews and narrow gaps at all edges, other-icon priority, dismissing without activation, hidden/fullscreen/drag overrides, movement-only wakeups, and settling without a continuous animation timer. |
@@ -42,7 +43,7 @@ The older `test_*.js` files outside the three GJS suites are manual experiments,
 
 ## Desktop verification
 
-Complete [CHECKLIST.md](../CHECKLIST.md) in a disposable GNOME session before a release. Pay particular attention to magnified overhang clicks, immediate exits after clicking, Show Desktop recovery, minimized siblings, preview selection/dismissal, immediate return during autohide, and repeated enable/disable or lock/unlock.
+Complete [CHECKLIST.md](../CHECKLIST.md) in a disposable GNOME session before a release. Pay particular attention to magnified overhang clicks, inward right-click menu placement at every dock edge, immediate exits after clicking, Show Desktop recovery, minimized siblings, preview selection/dismissal, immediate return during autohide, and repeated enable/disable or lock/unlock.
 
 Inspect the Shell journal for disposed-object errors and Clutter allocation assertions. Compare whole-Shell CPU and RAM under the same idle, stationary-hover, and repeated interaction conditions. These regression tests check behavior, operation counts, and resource lifetimes; they do not measure a live compositor's GPU/CPU use or process RSS, and cannot establish input focus, rendering, or Shell-version compatibility by themselves.
 
