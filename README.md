@@ -87,6 +87,18 @@ This helper requires an existing extension directory that is not a symlink and a
 
 For development, `make` or `make build` compiles schemas without installing anything. `make install` builds the modern archive and installs it through `gnome-extensions`; `make g44` does the same for the legacy archive. Use the update helper above when you need its backups and preference verification. For development and release commands, see [HACKING.md](HACKING.md).
 
+### Restore My Custom Settings
+
+[my-custom.dconf](my-custom.dconf) saves this fork maintainer's current dock configuration: 94 preferences, including their current default values. It includes appearance, position, autohide, animations, window behavior, and optional icons. Runtime messages and the detected monitor count are excluded.
+
+After a fresh installation, copy `my-custom.dconf` to the new computer and run this command from the folder containing it:
+
+```sh
+dconf load /org/gnome/shell/extensions/dash2dock-lite/ < my-custom.dconf
+```
+
+Then log out and back in. The snapshot is included in both extension archives and is applied only when you run the command. It retains the Downloads path `/home/arson/Downloads`; adjust `downloads-path` in the file if restoring under a different username. This snapshot is separate from the appearance-only JSON theme export described below.
+
 ### Other Distribution Channels
 
 The [GNOME Extensions listing](https://extensions.gnome.org/extension/4994/dash2dock-lite/) and the [Arch AUR package](https://aur.archlinux.org/packages/gnome-shell-extension-dash2dock-lite) distribute upstream versions; they may not include this fork's changes.

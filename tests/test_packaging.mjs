@@ -45,6 +45,8 @@ function syntax(name, text, legacy) {
   if (legacy) assert.doesNotMatch(text, /^\s*(?:import |export )/m, name);
 }
 function portableContents(packaged) {
+  assert.equal(archiveText('my-custom.dconf'), readFileSync(join(source, 'my-custom.dconf'), 'utf8'),
+    'both archives retain the optional personal settings snapshot unchanged');
   assert.ok(packaged.has('schemas/org.gnome.shell.extensions.dash2dock-lite.gschema.xml'),
     'bundles retain portable settings schema source');
   assert.ok(!packaged.has('schemas/gschemas.compiled'),
@@ -80,7 +82,7 @@ function installedBundle(shellVersions) {
 try {
   for (const entry of readdirSync(source, {withFileTypes: true})) {
     if (entry.isFile() && (entry.name.endsWith('.js') || [
-      'Makefile', 'metadata.json', 'stylesheet.css', 'LICENSE', 'README.md', 'CHANGELOG.md',
+      'Makefile', 'metadata.json', 'my-custom.dconf', 'stylesheet.css', 'LICENSE', 'README.md', 'CHANGELOG.md',
     ].includes(entry.name)) || entry.isDirectory() && [
       'apps', 'effects', 'preferences', 'schemas', 'themes', 'tools', 'ui',
     ].includes(entry.name)) {

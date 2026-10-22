@@ -19,6 +19,7 @@ publish:
 	cp LICENSE ./build
 	cp *.js ./build
 	cp metadata.json ./build
+	cp my-custom.dconf ./build
 	cp stylesheet.css ./build
 	cp CHANGELOG.md ./build
 	cp README.md ./build
@@ -56,6 +57,7 @@ legacy-build: build
 	cp ./LICENSE* ./build
 	cp ./CHANGELOG* ./build
 	cp ./README* ./build
+	cp ./my-custom.dconf ./build
 	cp ./stylesheet.css ./build
 
 g44: publish-g44

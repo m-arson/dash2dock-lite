@@ -4,6 +4,7 @@ Extension versions refer to `metadata.json`. This fork's current behavior is doc
 
 ## Version 109
 
+* Include an optional `my-custom.dconf` snapshot of 94 current preferences and document restoring it after a fresh install. Keep its application explicit; installation preserves existing settings.
 * Audit repository files by actual use; remove obsolete standalone experiments, unused UI layouts, launcher templates, custom icons, and the unused vector helper. Stop tracking the generated settings binary.
 * Keep modern and legacy packaging, use the shared current preferences UI, and make the default build compile without installing. Development installation uses the official ZIP installer.
 * Clearly credit icedman's original project and describe his Buy Me a Coffee link as support. Preserve the GPL license, original author metadata, source credits, support QR, funding accounts, and historical artwork.
