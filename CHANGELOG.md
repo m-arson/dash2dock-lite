@@ -2,6 +2,12 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 109
+
+* Audit repository files by actual use; remove obsolete standalone experiments, unused UI layouts, launcher templates, custom icons, and the unused vector helper. Stop tracking the generated settings binary.
+* Keep modern and legacy packaging, use the shared current preferences UI, and make the default build compile without installing. Development installation uses the official ZIP installer.
+* Clearly credit icedman's original project and describe his Buy Me a Coffee link as support. Preserve the GPL license, original author metadata, source credits, support QR, funding accounts, and historical artwork.
+
 ## Version 108
 
 * Position right-click app menus toward the desktop from the clicked icon at every dock edge, including native app actions and custom launchers. Anchor menus to the actual icon button so placement follows its magnification.

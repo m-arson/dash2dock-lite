@@ -16,7 +16,7 @@ This document describes the implementation in this fork. Earlier sketches of sep
 | `services.js` | Clock/calendar deadlines, notification state, folder monitoring, asynchronous Downloads/Trash scans, and mounted devices. |
 | `timer.js` | Shared GLib timer subscriptions, deferred work, cancellation, and source removal when idle. |
 | `integrations.js` | Blur My Shell and Compiz hooks, including restoring or releasing owned wrappers. |
-| `prefs.js`, `preferences/`, `ui/` | Preferences UI, settings bindings, presets, and legacy UI variants. |
+| `prefs.js`, `preferences/`, `ui/` | Shared preferences UI, settings bindings, presets, and original-project/support links. Both build targets use the same UI. |
 | `style.js`, `drawing.js`, `effects/`, `apps/` | Generated stylesheets, drawing helpers, icon effects, and dynamic icon content. |
 | `monitors.js` | Preferences-side Mutter display configuration queries and stale-reply rejection. |
 

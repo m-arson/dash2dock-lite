@@ -331,7 +331,7 @@ test('pullout animation stops safely when its target or list is destroyed', () =
   const { DockItemList } = loadModule('dockItemMenu.js', 'DockItemList', {
     Main: {}, BoxPointer: {}, PopupMenu: {}, trySpawnCommandLine() {},
     Gio: {}, GLib: {}, GObject: { registerClass },
-    Clutter: {}, St: { Widget: Actor }, Graphene: {}, DockPosition: {}, Vector: class {},
+    Clutter: {}, St: { Widget: Actor }, Graphene: {}, DockPosition: {},
   });
   const list = new DockItemList();
   const dock = {

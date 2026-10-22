@@ -6,6 +6,7 @@ Use this checklist for each release. These are checks to perform, not a record t
 
 - Run `npm test`, `npm run check`, and `glib-compile-schemas --strict --dry-run schemas`.
 - Build modern and legacy archives separately, following [HACKING.md](HACKING.md). Check each archive's version, UUID, Shell targets, themes, and source files.
+- Confirm both archives retain the original license, icedman author/support metadata, and support QR. Build from source without a tracked compiled schema; plain `make` should compile without installing.
 - Review [CHANGELOG.md](CHANGELOG.md) and [README.md](README.md) against the final behavior. A declared Shell target requires desktop testing on that version.
 - Use the update helper on an existing test installation; confirm its manifest reports verified files/settings and preferences survive logging out and back in.
 

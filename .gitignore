@@ -6,3 +6,4 @@ dist
 *.zip
 _*.js
 TODO.md
+schemas/gschemas.compiled

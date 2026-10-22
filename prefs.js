@@ -73,7 +73,7 @@ export default class Preferences extends ExtensionPreferences {
     const actions = [
       {
         name: 'open-bug-report',
-        link: 'https://github.com/icedman/dash2dock-lite/issues',
+        link: 'https://github.com/m-arson/dash2dock-lite/issues',
       },
       {
         name: 'open-readme',
@@ -85,7 +85,7 @@ export default class Preferences extends ExtensionPreferences {
       },
       {
         name: 'open-license',
-        link: 'https://github.com/icedman/dash2dock-lite/blob/master/LICENSE',
+        link: 'https://github.com/icedman/dash2dock-lite/blob/main/LICENSE',
       },
     ];
 

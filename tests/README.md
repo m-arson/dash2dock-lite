@@ -39,8 +39,6 @@ node tests/test_window_preview.mjs
 gjs -m tests/test_drag_order.js
 ```
 
-The older `test_*.js` files outside the three GJS suites are manual experiments, some requiring a graphical session. The automated runner does not launch them.
-
 ## Desktop verification
 
 Complete [CHECKLIST.md](../CHECKLIST.md) in a disposable GNOME session before a release. Pay particular attention to magnified overhang clicks, inward right-click menu placement at every dock edge, immediate exits after clicking, Show Desktop recovery, minimized siblings, preview selection/dismissal, immediate return during autohide, and repeated enable/disable or lock/unlock.
@@ -48,3 +46,5 @@ Complete [CHECKLIST.md](../CHECKLIST.md) in a disposable GNOME session before a 
 Inspect the Shell journal for disposed-object errors and Clutter allocation assertions. Compare whole-Shell CPU and RAM under the same idle, stationary-hover, and repeated interaction conditions. These regression tests check behavior, operation counts, and resource lifetimes; they do not measure a live compositor's GPU/CPU use or process RSS, and cannot establish input focus, rendering, or Shell-version compatibility by themselves.
 
 See [HACKING.md](../HACKING.md) for build commands and [ERRORS.md](../ERRORS.md) for a reproducible diagnostic report.
+
+The dock is based on [icedman’s Dash2Dock Animated](https://github.com/icedman/dash2dock-lite). Its original authorship and [GPL 3.0 license](../LICENSE) remain credited. The [upstream issue tracker](https://github.com/icedman/dash2dock-lite/issues) belongs to the original project; report fork-specific regressions to this fork’s maintainer. You can support icedman through [Buy Me a Coffee](https://www.buymeacoffee.com/icedman).

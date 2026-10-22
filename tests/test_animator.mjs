@@ -74,8 +74,6 @@ const context = vm.createContext({
 });
 const source = readFileSync(new URL('../animator.js', import.meta.url), 'utf8')
   .replace(/^import\s[\s\S]*?;\n/gm, '').replace(/export /g, '');
-vm.runInContext(readFileSync(new URL('../vector.js', import.meta.url), 'utf8')
-  .replace(/export /g, ''), context);
 vm.runInContext(source + '\nglobalThis.Animator = Animator;', context);
 const icon = new Actor();
 icon._icon = new Actor({icon_name: 'app'});

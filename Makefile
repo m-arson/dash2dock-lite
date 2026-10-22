@@ -1,23 +1,16 @@
-all: build install lint
+all: build
 
-.PHONY: all build install clean publish install-zip legacy-build g44 publish-g44
+.PHONY: all build install clean publish install-zip legacy-build g44 publish-g44 test-prefs test-prefs-g44 xml-lint pretty todo
 
 build:
 	glib-compile-schemas --strict --targetdir=schemas/ schemas
 
-install: build
-	echo "installing..."
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	mkdir -p ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	cp -R ./* ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/build
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/Makefile
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/tests
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/tools
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/screenshots
+install: publish
+	$(MAKE) install-zip
 
 clean:
 	rm -rf ./build
+	rm -f schemas/gschemas.compiled
 
 publish:
 	echo "publishing..."
@@ -39,7 +32,6 @@ publish:
 	rm -rf build/schemas/gschemas.compiled
 	rm -rf build/*_.js
 	rm -rf build/imports*.js
-	rm -rf build/apps/mount-dash2dock-lite.desktop
 	cd build ; \
 	zip -qr ../dash2dock-lite@icedman.github.com.zip .
 
@@ -49,20 +41,6 @@ install-zip:
 
 test-prefs:
 	gnome-extensions prefs dash2dock-lite@icedman.github.com
-
-test-shell: install
-	env GNOME_SHELL_SLOWDOWN_FACTOR=1 \
-		MUTTER_DEBUG_DUMMY_MODE_SPECS=1200x800 \
-	 	MUTTER_DEBUG_DUMMY_MONITOR_SCALES=1 \
-		dbus-run-session -- gnome-shell --devkit --wayland
-	rm /run/user/1000/gnome-shell-disable-extensions
-
-test-shell2: install
-	env GNOME_SHELL_SLOWDOWN_FACTOR=2 \
-		MUTTER_DEBUG_DUMMY_MODE_SPECS=1200x800 \
-	 	MUTTER_DEBUG_DUMMY_MONITOR_SCALES=2 \
-		dbus-run-session -- gnome-shell --devkit --wayland
-	rm /run/user/1000/gnome-shell-disable-extensions
 
 legacy-build: build
 	rm -rf ./build
@@ -74,38 +52,24 @@ legacy-build: build
 	cp -R ./schemas ./build
 	cp -R ./themes ./build
 	cp -R ./ui ./build
-	cp -R apps/*.sh ./build/apps
-	cp -R apps/*.desktop ./build/apps
-	rm -rf build/apps/mount-dash2dock-lite.desktop
 	cp ./effects/*.glsl ./build/effects
 	cp ./LICENSE* ./build
 	cp ./CHANGELOG* ./build
 	cp ./README* ./build
 	cp ./stylesheet.css ./build
 
-g44: legacy-build
-	rm -rf ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	mkdir -p ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
-	cp -r ./build/* ~/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/
+g44: publish-g44
+	$(MAKE) install-zip
 
 publish-g44: legacy-build
 	echo "publishing..."
 	rm -f ./dash2dock-lite@icedman.github.com.zip
+	rm -f build/schemas/gschemas.compiled
 	cd build ; \
 	zip -qr ../dash2dock-lite@icedman.github.com.zip .
 
 test-prefs-g44: g44
 	gnome-extensions prefs dash2dock-lite@icedman.github.com
-
-test-shell-g44: g44
-	env GNOME_SHELL_SLOWDOWN_FACTOR=2 \
-		MUTTER_DEBUG_DUMMY_MODE_SPECS=1200x800 \
-	 	MUTTER_DEBUG_DUMMY_MONITOR_SCALES=1 \
-		dbus-run-session -- gnome-shell --nested --wayland
-	rm /run/user/1000/gnome-shell-disable-extensions
-
-lint:
-	eslint ./
 
 xml-lint:
 	cd ui ; \
@@ -116,4 +80,4 @@ pretty: xml-lint
 	prettier --single-quote --write "**/*.js"
 
 todo:
-	python ./tools/todo.py > ./TODO.md
+	python3 ./tools/todo.py > ./TODO.md

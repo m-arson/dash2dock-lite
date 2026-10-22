@@ -1,15 +1,20 @@
 # Dash2Dock Animated
 
-An animated desktop dock targeting GNOME Shell 46–51, based on [icedman's Dash2Dock Animated](https://github.com/icedman/dash2dock-lite). This fork is maintained on the `main` branch.
+This project is a maintained fork of **[Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite)**, an animated desktop dock for GNOME Shell. The original project, design, and foundation are icedman's work; this fork adds fixes and improvements and is maintained on `main`, targeting GNOME Shell 46–51.
 
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
+If you enjoy this cool project, please **[support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**. This support goes to the original creator.
 
-![Screen Shot](https://raw.githubusercontent.com/icedman/dash2dock-lite/main/screenshots/Screenshot%20from%202024-03-19%2015-31-27.png)
+[![Support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
+
+![Screenshot of icedman's original dock](screenshots/Screenshot%20from%202024-03-19%2015-31-27.png)
+
+The screenshot shows the upstream project; this fork's current behavior is described below.
 
 ## Current Version
 
-Version **108** includes:
+Version **109** includes:
 
+* Repository cleanup: remove obsolete prototypes, unused assets and launcher templates; generate settings binaries during builds. Both modern and legacy packages retain the current preferences UI and icedman's credits and support links.
 * Right-click menus open toward the desktop beside the clicked icon: right of a left dock, left of a right dock, below a top dock, and above a bottom dock. Menus follow the icon's magnified position, including custom launchers.
 * Freely dismissible previews: the source icon stays zoomed while you browse its previews. Move to another icon or away from the dock, click elsewhere, press Escape, or click the source icon again to dismiss without selecting a window. Clicking another icon works immediately.
 * A thumbnail chooser for apps with multiple windows: click the active app to see small window previews with titles, then select one to activate only that window. Right-click retains GNOME's app actions.
@@ -80,7 +85,7 @@ The helper backs up installed files, extension preferences, custom configuration
 
 This helper requires an existing extension directory that is not a symlink and an unchanged settings schema. A schema change requires a reviewed migration. Log out and back in after a successful update to load the new code.
 
-For direct development installation, `make build` compiles schemas and `make install` copies the working tree into the user extension directory. The default `make` target also installs the extension and runs ESLint, which must be installed separately. For development and release commands, see [HACKING.md](HACKING.md).
+For development, `make` or `make build` compiles schemas without installing anything. `make install` builds the modern archive and installs it through `gnome-extensions`; `make g44` does the same for the legacy archive. Use the update helper above when you need its backups and preference verification. For development and release commands, see [HACKING.md](HACKING.md).
 
 ### Other Distribution Channels
 
@@ -207,4 +212,4 @@ top -d 0.5
 
 ## License and Attribution
 
-Originally authored by **icedman**. This fork retains the upstream project's attribution and donation link. Distributed under the **GPL 3.0 License**; see [LICENSE](LICENSE).
+Originally authored by **icedman**, whose [upstream project](https://github.com/icedman/dash2dock-lite) is the basis of this fork. Original attribution, license notices, and third-party adaptation credits are retained. To support the original creator, use **[icedman's Buy Me a Coffee page](https://www.buymeacoffee.com/icedman)**. Distributed under the **GPL 3.0 License**; see [LICENSE](LICENSE).
