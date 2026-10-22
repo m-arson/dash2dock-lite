@@ -1,12 +1,14 @@
 # Dash2Dock Animated
 
-**Based on [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work. This fork maintains that foundation with fixes and improvements on the `main` branch.
+**Based on [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work.
 
-If you enjoy this cool project, please **[support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**. Support goes to the original creator.
+This personal fork is updated around my preferred dock configuration, saved in [my-custom.dconf](my-custom.dconf), and maintained on `main`. Its changes have only been tested on my own machine, described [below](#tested-setup).
+
+If you enjoy this cool project, you can **[support him on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**.
 
 [![Support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
 
-![Dash2Dock Animated on a GNOME desktop, with a left-edge dock and magnified icons](screenshots/desktop-left-dock.png)
+![Dash2Dock Animated on a GNOME desktop, with a left-edge dock and magnified icons](screenshots/desktop-left-dock-framed.svg)
 
 [Install](#installation) · [Update](#updating) · [Restore my settings](#restore-my-custom-settings) · [Customize](#customization) · [Troubleshoot](#troubleshooting-and-bug-reports)
 
@@ -26,6 +28,19 @@ An animated GNOME desktop dock with magnification, autohide, window previews, an
 | Legacy | 42, 43, 44 | `make publish-g44` |
 
 Declared targets still require verification in the corresponding desktop session. Other Shell versions are not covered. The Show Apps button's front-position option works on horizontal docks only.
+
+### Tested setup
+
+This is the maintainer's local setup, recorded on October 22, 2026. Testing of this fork is limited to this machine; the other GNOME targets above are build declarations, not verified desktop results.
+
+| Component | Version or hardware |
+| --- | --- |
+| Linux distribution | Debian GNU/Linux 13.7 (trixie) |
+| Kernel | `7.1.13+deb13-amd64` |
+| Desktop | GNOME Shell 48.7 |
+| Session | Wayland |
+| Architecture | `x86_64` |
+| CPU | Intel Core Ultra 5 125U |
 
 ## Dock behavior
 
@@ -207,6 +222,12 @@ journalctl /usr/bin/gnome-shell -f -o cat
 ```
 
 For extension conflicts, repeat the steps with other extensions disabled. For performance reports, compare idle, stationary hover, and repeated interaction under the same conditions. Monitor the Shell process with `top -d 0.5` and record CPU and memory use.
+
+## Contributors
+
+**icedman** is the original author. **[m-arson](https://github.com/m-arson)** maintains this personal fork and supplies its configuration and desktop testing. **OpenAI Codex**, an AI coding assistant, assisted with implementation, review, tests, and documentation.
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the attribution details. The original author credit remains unchanged in the project metadata.
 
 ## License and Attribution
 
