@@ -18,6 +18,7 @@ The tests exercise production code with small Shell UI fakes, plus real GLib tim
 | --- | --- |
 | Animation and layout | Finite geometry, zoom/bounce settling, stable layout reuse, idle subscription removal, and indicator allocation/release. |
 | Input and dragging | Magnified native hit bounds at every edge, scaled parents/pivots, X11 tracking, drag transform restoration, missed exits after click grabs, pointer-watch cleanup, favorite insertion/races, and empty native Dash drops. |
+| Pointer watching | Bundled helper loading without Shell's removed pointer-watcher resource, coalesced cursor notifications, movement-only delivery, idle-aware fallback, and final-watch signal/timer/pending-work cleanup. |
 | Context-menu placement | Inward opening at every dock edge, actual icon-button anchoring, and refreshed geometry for reused menus after position changes, including right-to-left layouts. |
 | App activation | Single-window minimizing, recent-window selection, restoring one minimized window, Show Desktop/stale-focus recovery, monitor/workspace filtering, and native modifier/custom-launcher fallbacks. |
 | Window previews | Proportional compositor clones, minimized-window preservation, unavailable-surface fallback, selecting one window, bounded scrolling, keyboard visibility, title/window changes, no modal manager, first-click delivery to outside targets, Escape/source dismissal, and releasing clones/input/window signals on close or destruction. |
@@ -37,6 +38,7 @@ Run a focused suite while iterating:
 ```sh
 node tests/test_window_activation.mjs
 node tests/test_window_preview.mjs
+node tests/test_pointer_watcher.mjs
 gjs -m tests/test_drag_order.js
 ```
 

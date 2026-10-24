@@ -3,7 +3,7 @@
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Fav from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
-import * as PointerWatcher from 'resource:///org/gnome/shell/ui/pointerWatcher.js';
+import * as PointerWatcher from './pointerWatcher.js';
 
 import Shell from 'gi://Shell';
 import GObject from 'gi://GObject';
@@ -1831,7 +1831,7 @@ export let Dock = GObject.registerClass(
       if (this._pointerWatch) return;
 
       // Click grabs can swallow the final actor leave/motion event. The shared
-      // Shell watcher only calls us when the pointer moves, and sleeps at idle.
+      // pointer watcher only calls us when the pointer moves, and sleeps at idle.
       const watch = PointerWatcher.getPointerWatcher().addWatch(100, (x, y) => {
         if (this._pointerWatch !== watch) return;
         if (this._destroyed || !this.dash || this.dash._d2dlDestroying || this._hidden) {

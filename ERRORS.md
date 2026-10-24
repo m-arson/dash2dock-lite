@@ -27,6 +27,7 @@ For a report, describe the exact starting state and pointer/click/key sequence. 
 | --- | --- |
 | Update appears to have no effect | Confirm installed version and log out/in to reload source modules. For helper installs, inspect its backup `manifest.json`. |
 | Extension will not enable | Confirm the archive's Shell targets match the desktop and inspect the first enable error in the journal. |
+| GNOME 51 reports missing `resource:///org/gnome/shell/ui/pointerWatcher.js` | Version 109 imports a Shell module removed in GNOME 51. Update to version 110 or later, then log out/in to load the bundled replacement. Resetting preferences does not repair this import error. |
 | Enlarged icons miss clicks or zoom stays enlarged | Reproduce at the same dock edge and scaling; include the click point outside the frame and whether the pointer moved away immediately. |
 | Hidden dock reveals before reaching the edge | Record pressure sense, fullscreen/overlap state, and whether it occurs immediately after hiding. Include the monitor's dock edge and scaling. |
 | App does not return after Show Desktop | Record the shortcut, number of app windows, workspace/monitor, and whether a second click behaves differently. Normal selection should activate one window. |
@@ -47,3 +48,5 @@ Whole-Shell CPU or RSS includes other Shell features and extensions. Regression 
 The helper in `tools/apply_update.py` prints its backup path and writes `manifest.json`. A failed install should report `rolled_back` when the previous files and extension settings were restored. Keep the backup and the full error if it reports `rollback_failed`.
 
 The helper requires an existing nonsymlink installation and an unchanged settings schema. A refusal before installation does not mean the extension code failed. Review schema migrations separately, and keep custom configuration and preference backups outside the installed extension directory. See [README.md](README.md) for the supported update command.
+
+The optional full desktop profile in `desktop-setup/` is a separate GNOME 48 snapshot with pinned companion extensions. Its GNOME 51 refusal protects that version-specific setup; use the current dock update package when fixing the dock after a Shell upgrade.

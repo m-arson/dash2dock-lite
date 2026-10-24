@@ -2,6 +2,12 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 110
+
+* Fix GNOME 51 startup after removal of Shell's `ui/pointerWatcher.js`. Bundle pointer watching with the extension instead of importing that removed resource.
+* Use coalesced cursor-position notifications on newer Shell versions, retain an idle-aware fallback for older versions, and release pending work and signals when the final watch is removed.
+* Keep the saved eight-extension desktop profile explicitly tied to its GNOME 48 snapshot. GNOME 51 source/API and native component checks do not establish live desktop behavior.
+
 ## Version 109
 
 * Document the maintainer's complete GNOME 48 setup, including eight installed extension versions, settings snapshots, appearance, wallpaper, and app order. Add an optional installer/restore helper with backups, version checks, and isolated tests.

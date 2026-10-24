@@ -15,6 +15,7 @@ This document describes the implementation in this fork. Earlier sketches of sep
 | `autohide.js` | Window overlap tracking, edge/pressure reveal, and hide/show transitions. |
 | `services.js` | Clock/calendar deadlines, notification state, folder monitoring, asynchronous Downloads/Trash scans, and mounted devices. |
 | `timer.js` | Shared GLib timer subscriptions, deferred work, cancellation, and source removal when idle. |
+| `pointerWatcher.js` | Bundled movement notifications, cursor-event coalescing, older-Shell polling fallback, and watch cleanup. |
 | `integrations.js` | Blur My Shell and Compiz hooks, including restoring or releasing owned wrappers. |
 | `prefs.js`, `preferences/`, `ui/` | Shared preferences UI, settings bindings, presets, and original-project/support links. Both build targets use the same UI. |
 | `style.js`, `drawing.js`, `effects/`, `apps/` | Generated stylesheets, drawing helpers, icon effects, and dynamic icon content. |
@@ -25,6 +26,8 @@ This document describes the implementation in this fork. Earlier sketches of sep
 The dock retains native Dash app buttons for activation, drag-and-drop, keyboard interaction, and app menus. Animated icons render separately in `renderArea`; the renderer actors are not click targets. `_syncIconInput()` transforms the corresponding native buttons to match the displayed icons, including their overhang outside the dock background. It restores those transforms for dragging and teardown.
 
 The dock's `struts`, `dwell`, background, and input geometry serve different purposes: reserved work area, edge reveal, visual fill/blur, and pointer interaction. Keep their coordinates consistent with the selected monitor and scale. While hidden, autohide ignores the former visible footprint so the hide animation cannot create an oversized reveal zone.
+
+Pointer watching is extension-owned because GNOME 51 removed Shell's `ui/pointerWatcher.js`. On newer Shell versions, cursor-tracker `position-invalidated` notifications coalesce into one `BEFORE_REDRAW` callback. Older versions use idle-aware polling. Watches notify on movement, and removing the final watch releases signals and pending callbacks or timers. The helper must work without importing the removed Shell resource.
 
 Blur My Shell receives allocated, signal-capable dock actors. Newer Blur My Shell versions own their surface geometry; older hooks use the compatibility path. Integration changes must preserve that distinction and background/renderer stacking.
 

@@ -14,7 +14,9 @@ If you enjoy this cool project, you can **[support him on Buy Me a Coffee](https
 
 ## Overview
 
-An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **109**. See the [changelog](CHANGELOG.md) for release details.
+An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **110**. See the [changelog](CHANGELOG.md) for release details.
+
+Version 110 fixes startup on GNOME 51, which removed the Shell pointer-watcher module used by earlier versions. Pointer watching is now bundled with the extension.
 
 * Animated icons, running indicators, notification badges, and favorite reordering
 * Multi-monitor support, autohide/intellihide, and panel mode
@@ -31,22 +33,25 @@ Declared targets still require verification in the corresponding desktop session
 
 ### Tested setup
 
-This is the maintainer's local setup, recorded on October 22, 2026. Testing of this fork is limited to this machine; the other GNOME targets above are build declarations, not verified desktop results.
+Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**. GNOME 51 resource/API checks and native shader/drawing module imports pass; live desktop verification of version 110 is pending installation.
+
+The screenshot and saved full desktop profile were captured earlier, on **October 22 with GNOME 48.7**. They remain a record of that setup, rather than a GNOME 51 configuration.
 
 | Component | Version or hardware |
 | --- | --- |
 | Linux distribution | Debian GNU/Linux 13.7 (trixie) |
 | Kernel | `7.1.13+deb13-amd64` |
-| Desktop | GNOME Shell 48.7 |
+| Current desktop | GNOME Shell 51.0 |
+| Saved profile and screenshot | GNOME Shell 48.7, October 22, 2026 |
 | Session | Wayland |
 | Architecture | `x86_64` |
 | CPU | Intel Core Ultra 5 125U |
 
-### Companion extensions and settings
+### Saved companion extensions and settings
 
-The desktop shown above uses these installed versions. Their current settings are saved in the optional [full desktop profile](desktop-setup/README.md), alongside the wallpaper, selected appearance settings, and pinned-app order.
+These versions and their settings were saved with the **October 22 GNOME 48.7 setup** in the optional [full desktop profile](desktop-setup/README.md), alongside the wallpaper, selected appearance settings, and pinned-app order. This table is the saved profile's inventory, not the current GNOME 51 installation.
 
-| Extension | Installed version |
+| Extension | Saved version |
 | --- | --- |
 | [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) | 66 |
 | [Blur my Shell](https://extensions.gnome.org/extension/3193/blur-my-shell/) | 76 |
@@ -57,7 +62,7 @@ The desktop shown above uses these installed versions. Their current settings ar
 | [User Themes](https://extensions.gnome.org/extension/19/user-themes/) | 64 |
 | [Vitals](https://extensions.gnome.org/extension/1460/vitals/) | 86 |
 
-This complete profile targets **GNOME 48**, with **277 extension preferences and 20 desktop settings**. Its guide includes installation, an offline bundle, and settings restoration. Matching the screenshot also requires the listed applications and browser web apps; see the guide for details. The setup is optional and does not change your current desktop automatically.
+This complete profile targets **GNOME 48 only**, with **277 extension preferences and 20 desktop settings**. Its guide includes installation, an offline bundle, and settings restoration. Use the updated dock archive for GNOME 51; do not restore this older eight-extension bundle there. Matching the screenshot also requires the listed applications and browser web apps. The setup is optional and does not change your current desktop automatically.
 
 ## Dock behavior
 
@@ -149,7 +154,7 @@ Then log out and back in. The file is included in both extension archives and is
 
 This full snapshot is separate from the appearance-only JSON theme export below.
 
-To restore the other seven extensions and the desktop appearance too, follow the [full desktop setup guide](desktop-setup/README.md).
+For the saved GNOME 48 setup's other seven extensions and desktop appearance, follow the [full desktop setup guide](desktop-setup/README.md). That profile is not a GNOME 51 migration.
 
 ## Customization
 

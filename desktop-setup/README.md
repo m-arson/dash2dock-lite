@@ -75,13 +75,17 @@ Log out and back in once more to refresh the desktop.
 
 ## Restore from this repository
 
-From the repository root, build the modern fork archive:
+This historical GNOME 48 profile pins fork version **109**. Current `main` builds a newer dock, so use the offline bundle above or build the recorded version from its original source snapshot. From the repository root:
 
 ```sh
-make publish
+desktop_profile_source="$(mktemp -d)"
+git archive 85c73a1 | tar -xf - -C "$desktop_profile_source"
+make -C "$desktop_profile_source" publish
+mkdir -p dist
+cp "$desktop_profile_source/dash2dock-lite@icedman.github.com.zip" dist/dash2dock-lite-modern.zip
 ```
 
-The helper uses `dist/dash2dock-lite-modern.zip` when present, or the root archive produced by `make publish`. Both must match the profile's pinned fork version and schema.
+The helper uses `dist/dash2dock-lite-modern.zip` when present, or the root archive produced by `make publish`. Both must match the profile's pinned fork version and schema. For GNOME 51, use the current dock's [update instructions](../README.md#updating) instead of this GNOME 48 profile.
 
 Preview installation, then install:
 

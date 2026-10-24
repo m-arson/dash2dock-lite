@@ -138,7 +138,7 @@ os.execv('/usr/bin/' + command, [command] + sys.argv[1:])
 
   run('make', ['publish'], {env});
   let packaged = entries();
-  for (const name of ['themes/dark.json', 'themes/light.json', 'dragOrder.js', 'windowPreviewMenu.js']) {
+  for (const name of ['themes/dark.json', 'themes/light.json', 'dragOrder.js', 'windowPreviewMenu.js', 'pointerWatcher.js']) {
     assert.ok(packaged.has(name), `Modern package is missing ${name}`);
   }
   portableContents(packaged);
@@ -154,6 +154,8 @@ os.execv('/usr/bin/' + command, [command] + sys.argv[1:])
   }
   assert.match(archiveText('dock.js'), /from\s+['"]\.\/windowPreviewMenu\.js['"]/,
     'modern dock loads its thumbnail chooser component');
+  assert.match(archiveText('dock.js'), /from\s+['"]\.\/pointerWatcher\.js['"]/,
+    'modern dock uses its bundled watcher instead of a removed Shell module');
   assert.deepEqual(readFileSync(join(stage, 'unrelated-backup.zip')), sentinel);
   const modernArchive = readFileSync(join(stage, bundle));
   writeFileSync(join(stage, 'modern-backup.zip'), modernArchive);
@@ -165,8 +167,11 @@ os.execv('/usr/bin/' + command, [command] + sys.argv[1:])
   assert.deepEqual(JSON.parse(archiveText('metadata.json'))['shell-version'], ['42', '43', '44']);
   assert.ok(packaged.has('dragOrder.js'));
   assert.ok(packaged.has('windowPreviewMenu.js'), 'legacy package contains the thumbnail chooser');
+  assert.ok(packaged.has('pointerWatcher.js'), 'legacy package contains the pointer watcher');
   assert.match(archiveText('dock.js'), /Me\.imports\.windowPreviewMenu/,
     'legacy dock loads its generated thumbnail chooser component');
+  assert.match(archiveText('dock.js'), /Me\.imports\.pointerWatcher/,
+    'legacy dock loads its generated pointer watcher');
   for (const name of packaged) {
     assert.ok(!name.includes('recents'), 'removed recent-files helpers must stay absent');
     if (!name.endsWith('.js')) continue;
