@@ -33,7 +33,7 @@ Declared targets still require verification in the corresponding desktop session
 
 ### Tested setup
 
-Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**. GNOME 51 resource/API checks and native shader/drawing module imports pass; live desktop verification of version 110 is pending installation.
+Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**. GNOME 51 resource/API checks and native shader/drawing module imports pass; live desktop interaction still needs verification after loading version 110 in a fresh session.
 
 The screenshot and saved full desktop profile were captured earlier, on **October 22 with GNOME 48.7**. They remain a record of that setup, rather than a GNOME 51 configuration.
 
