@@ -4,10 +4,6 @@
 
 This personal fork is updated around my preferred dock configuration, saved in [my-custom.dconf](my-custom.dconf). Its changes have only been tested on my own machine, described [below](#tested-setup).
 
-If you enjoy this cool project, you can **[support him on Buy Me a Coffee](https://www.buymeacoffee.com/icedman)**.
-
-[![Support icedman on Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/icedman)
-
 ![Dash2Dock Animated on a GNOME desktop, with a left-edge dock and magnified icons](screenshots/desktop-left-dock-framed.svg)
 
 [Install](#installation) · [Update](#updating) · [Restore my settings](#restore-my-custom-settings) · [Full desktop setup](desktop-setup/README.md) · [Customize](#customization) · [Troubleshoot](#troubleshooting-and-bug-reports)
