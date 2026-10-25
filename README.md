@@ -1,6 +1,6 @@
 # Dash2Dock Animated
 
-**Based on [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work.
+**Based on cool project [Dash2Dock Animated by icedman](https://github.com/icedman/dash2dock-lite).** The original project, design, and foundation are icedman's work.
 
 This personal fork is updated around my preferred dock configuration, saved in [my-custom.dconf](my-custom.dconf). Its changes have only been tested on my own machine, described [below](#tested-setup).
 
