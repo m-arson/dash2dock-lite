@@ -10,11 +10,15 @@ This personal fork is updated around my preferred dock configuration, saved in [
 
 ## Overview
 
-An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **116**. See the [changelog](CHANGELOG.md) for release details.
+An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **118**. See the [changelog](CHANGELOG.md) for release details.
 
 Version 110 fixes startup on GNOME 51, which removed the Shell pointer-watcher module used by earlier versions. Pointer watching is now bundled with the extension.
 
 Version 116 restores window thumbnails on GNOME 51 after removal of St widgets' old `vertical` property. The preview stays nonmodal: its source icon remains zoomed while browsing, and moving to another icon dismisses it without selecting a window. Earlier versions could hit the removed property and fall back to the native modal title-only menu.
+
+Version 117 also keeps the source icon zoomed while its right-click app-actions menu is open. Closing the menu returns to normal pointer hover; stationary menus let the animation timer settle.
+
+Version 118 brings nonmodal behavior to right-click app menus, matching the window thumbnail chooser: hovering another dock icon or moving away dismisses the menu, outside clicks are delivered without being swallowed, and icons stay zoomed while browsing without forcing a menu choice.
 
 The saved personal settings use one thin running dash per window, up to four: left of the icon on a left dock, below it on a bottom dock, and correspondingly on the top or right edge for those positions. Choose **Running Indicator Style > Dashes** and **Running Indicator Size > Small** for window counts with half the normal dash thickness; the singular **Dash** style always shows one marker regardless of window count. A separate red circular notification badge sits at the icon's top-right, with centered white numbers for the app's notifications in GNOME's notification list. **Notification Badge Size > Small** is 2.25 times its version 114 diameter (three-quarters of Large), making the count easier to read. The badge stays circular for multiple digits; counts above 99 show **99+**, and zero notifications hide it. Choose **Notification Badge Style > Count** to enable it, or **None** to hide it.
 
@@ -33,7 +37,7 @@ Declared targets still require verification in the corresponding desktop session
 
 ### Tested setup
 
-Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**, and the maintainer confirmed version 110 works there. Version 115's larger circular notification badge still needs visual verification after loading it in a fresh session.
+Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**. The maintainer has confirmed that the window chooser now retains icon zoom. Version 118's nonmodal right-click menu behavior has regression coverage and still needs desktop verification after loading it in a fresh session.
 
 The screenshot and saved full desktop profile were captured earlier, on **October 22 with GNOME 48.7**. They remain a record of that setup, rather than a GNOME 51 configuration.
 
@@ -74,7 +78,7 @@ This complete profile targets **GNOME 48 only**, with **277 extension preference
 | Browse previews | The source icon stays zoomed. Move to another icon or away, click outside, press Escape, or click the source again to dismiss without selecting. Another icon responds to the first click. |
 | Scroll over an app | Cycle through its windows, restoring only the selected window. Hold Ctrl to stay on the current workspace. |
 | Ctrl-click or middle-click | Use GNOME's native new-window action. |
-| Right-click | Open native app actions toward the desktop: right of a left dock, left of a right dock, below a top dock, or above a bottom dock. |
+| Right-click | Open native app actions toward the desktop without modal grabs, keeping the source icon zoomed until dismissed: moving to another icon or away dismisses the menu, outside clicks propagate, and Escape closes it. |
 
 Click and scroll selection use the configured monitor filter; previews and the native app menu show the app-wide window list. Opening previews preserves keyboard focus and leaves minimized siblings minimized. Unavailable window surfaces show the app icon, and closing previews releases their resources.
 
@@ -140,7 +144,7 @@ The helper backs up installed files, extension preferences, custom configuration
 
 An existing extension directory must not be a symlink, and its settings schema must match the archive. Schema changes require a reviewed migration. Log out and back in after a successful update to load the new code.
 
-If previews, dashes, or notification badges still have their old behavior, check the running version with `gnome-extensions info dash2dock-lite@icedman.github.com`. The current session can retain an older version even after installing version 116; disabling and re-enabling does not reliably reload changed modules. Log out and back in to load the updated code.
+If previews, context-menu zoom, dashes, or notification badges still have their old behavior, check the running version with `gnome-extensions info dash2dock-lite@icedman.github.com`. The current session can retain an older version even after installing version 118; disabling and re-enabling does not reliably reload changed modules. Log out and back in to load the updated code.
 
 ## Restore My Custom Settings
 

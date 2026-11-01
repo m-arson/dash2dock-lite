@@ -2,6 +2,18 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 118
+
+* Match the window preview chooser's nonmodal behavior on right-click app menus and custom launcher menus: hovering another dock icon dismisses the menu and magnifies that icon immediately, and moving away into empty space unzooms and dismisses without forcing an action.
+* Outside mouse clicks and touch presses close the context menu without swallowing the event, delivering the click to other dock icons or desktop windows immediately. Escape closes the menu.
+* Detach context menus from `PopupMenuManager` modal grabs and track nonmodal input via stage captured-events. Unify popup owner tracking in the animator so context menus share preview dismissal, gap transit, and zoom retention.
+
+## Version 117
+
+* Keep the right-clicked icon magnified while its native app-actions menu is open, including custom launcher menus and keyboard/long-press opening. Preserve native menu actions and dismissal.
+* Wake normal hover settling when the menu closes, release retained zoom on icon cleanup, and suspend frame work while an open menu is stationary. Hidden/fullscreen, dragging, and disabled-magnification behavior still take precedence.
+* Cover context-menu zoom and dismissal at all four dock edges, legacy/current native menu creation, custom launchers, icon-cache invalidation, and teardown.
+
 ## Version 116
 
 * Restore thumbnail previews on GNOME 51 using St's supported orientation property on GNOME 48 and newer, with the legacy property retained for older targets. The removed property caused previews to fail and fall back to the modal title-only menu, losing retained icon zoom and free browsing between icons.

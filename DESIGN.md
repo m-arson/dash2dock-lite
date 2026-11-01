@@ -41,6 +41,8 @@ The preview chooser uses `PopupMenu` and `PopupBaseMenuItem` for its actor layou
 
 While the pointer is in a preview or the narrow gap connecting it to its source, the animator uses the source icon's position to retain zoom. Real hover on another icon wins and dismisses the preview. The existing movement-only pointer watcher handles leaving a settled preview; holding zoom does not require a continuous animation timer. Hidden, fullscreen, drag, disabled-magnification, and teardown behavior take precedence.
 
+Native app-actions menus and custom item menus retain their source icon's zoom while open, including submenu navigation, using the shared nonmodal popup tracking logic. Detached from PopupMenuManager to avoid modal input grabs, their stage captured-event listener dismisses the menu on outside clicks and delivers the event to targets without consumption. Hovering another dock icon immediately dismisses the menu so the newly hovered icon can zoom; leaving into empty space unzooms and dismisses without forcing an action. Closing or destroying the menu source releases retained zoom and input listeners; hidden, fullscreen, drag, and disabled-magnification behavior take precedence here too.
+
 The chooser clones existing compositor actors without showing or unminimizing their source windows. Missing surfaces use an app-icon fallback. Window changes update rows while open; closing releases clones and window/app/input connections. Destroying the app icon also destroys its chooser.
 
 ## Work and lifetime rules

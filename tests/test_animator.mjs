@@ -94,7 +94,9 @@ const inputSyncs = [];
 const pointerWatchStates = [];
 let inputRestores = 0;
 let previewIcon = null;
+let appMenuIcon = null;
 const previewPointerReads = [];
+const appMenuPointerReads = [];
 const dock = {
   extension, _icons: [icon], _iconSizeScaledDown: 32, _iconSize: 32,
   _scaleFactor: 1, _edge_distance: 0, _position: 'bottom', _separators: [],
@@ -109,6 +111,10 @@ const dock = {
   _getWindowPreviewIcon(realPointer) {
     previewPointerReads.push([...realPointer]);
     return previewIcon;
+  },
+  _getAppMenuIcon(realPointer) {
+    if (realPointer) appMenuPointerReads.push([...realPointer]);
+    return appMenuIcon;
   },
   _debounceEndAnimation() { endRearms++; }, _beginAnimation() {},
   _settleAnimation() { settles++; },
@@ -199,6 +205,20 @@ assert.equal(renderer.scale_x, 1,
 assert.equal(pointerWatchStates.at(-1), false,
   'dismissed preview releases pointer recovery after settling');
 
+appMenuIcon = icon;
+for (let i = 0; i < 250; i++) animator.animate(16);
+assert.ok(appMenuPointerReads.length > 0, 'animator passes pointer coordinates to _getAppMenuIcon');
+assert.equal(dock._nearestIcon, icon, 'right-click popup retains the source as the visual hover');
+assert.ok(renderer.scale_x > 1, 'a distant native app menu keeps its source icon magnified');
+const heldAppMenuRearms = endRearms;
+for (let i = 0; i < 100; i++) animator.animate(16);
+assert.equal(endRearms, heldAppMenuRearms, 'stationary context menus do not keep requesting frame work');
+assert.equal(pointerWatchStates.at(-1), true, 'context menus retain movement-only pointer recovery');
+appMenuIcon = null;
+for (let i = 0; i < 250; i++) animator.animate(16);
+assert.equal(renderer.scale_x, 1, 'closing a native menu settles its source back to normal');
+assert.equal(pointerWatchStates.at(-1), false, 'closed context menus release pointer recovery after settling');
+
 const anotherIcon = new Actor({x: 0, y: 64});
 anotherIcon._icon = new Actor({icon_name: 'other-app'});
 anotherIcon._icon.parent = new Actor();
@@ -216,6 +236,7 @@ dock.isVertical = () => false;
 // An already selected preview owner cannot override stronger state changes.
 for (const state of ['hidden', 'fullscreen', 'dragging', 'disabled']) {
   previewIcon = icon;
+  appMenuIcon = icon;
   within = false;
   dock._hidden = state === 'hidden';
   dock._monitor.inFullscreen = state === 'fullscreen';
@@ -226,6 +247,7 @@ for (const state of ['hidden', 'fullscreen', 'dragging', 'disabled']) {
   assert.equal(renderer.scale_x, 1, `${state} does not leave a stale magnified preview icon`);
 }
 previewIcon = null;
+appMenuIcon = null;
 dock._hidden = false;
 dock._monitor.inFullscreen = false;
 dock._dragging = false;

@@ -24,6 +24,7 @@ Use this checklist for each release. These are checks to perform, not a record t
 - Reorder favorites forward/backward; insert at the start, middle, and end; cancel a drag; change running apps during a drag; and drop into an empty favorites-only dock.
 - Check Show Apps with mouse, touch, and keyboard: hover label, opening the app grid, closing it on a second click, and its optional horizontal front position.
 - Right-click native apps and custom launchers at every edge, with normal and magnified icons. Verify menus open right of a left dock, left of a right dock, below a top dock, and above a bottom dock, anchored to the clicked icon. Reopen an existing menu after changing the dock position and repeat in a right-to-left layout.
+- Browse a right-click menu and any submenu: the source icon stays zoomed, including while stationary beyond the animation timeout. Moving over another icon dismisses the menu and magnifies that icon immediately; moving away dismisses without selection. Dismiss with Escape or an outside click, verifying outside targets receive the click on first press. Repeat using keyboard/long-press opening and disabled magnification.
 
 ## Window activation and previews
 

@@ -322,6 +322,7 @@ export let Dock = GObject.registerClass(
     _prepareDashDestroy(dash) {
       if (!dash._d2dlDestroying) {
         dash._d2dlDestroying = true;
+        this._clearActiveAppMenu();
         this._restoreIconInputs();
         this.cancelAnimations();
         this._cancelFavoriteDrop(dash);
@@ -408,6 +409,9 @@ export let Dock = GObject.registerClass(
 
     undock() {
       this._activeWindowPreview?.menu.close();
+      const activeMenu = this._activeAppMenu?.menu;
+      this._clearActiveAppMenu();
+      activeMenu?.close();
       this._destroyList();
       this._endAnimation();
       this._removeIconEffect();
@@ -1147,6 +1151,7 @@ export let Dock = GObject.registerClass(
       if (appwell) appwell._windowPreviewMenu = null;
       preview?.destroy();
       const menus = new Set([c._menu, appwell?._menu].filter(Boolean));
+      if (this._activeAppMenu?.appIcon === appwell) this._clearActiveAppMenu();
       c._menu = null;
       if (appwell) appwell._menu = null;
       for (const menu of menus) {
@@ -1302,8 +1307,31 @@ export let Dock = GObject.registerClass(
               // Native DashIcon can ignore popupMenu's side argument. Its
               // menu-state signal runs after lazy creation, before open().
               this._syncAppMenuSide(c._appwell, c._menu ?? c._appwell?._menu);
+              const menu = c._menu ?? c._appwell?._menu;
+              if (menu) {
+                c._menuManager?.removeMenu(menu);
+                c._appwell?._menuManager?.removeMenu(menu);
+                const previous = this._activeAppMenu;
+                this._activeAppMenu = {
+                  menu,
+                  appIcon: c._appwell,
+                  initialPointer: global.get_pointer?.().slice(0, 2) ?? [0, 0],
+                };
+                if (previous && previous.menu !== menu) previous.menu.close();
+                this._watchAppMenuInput(menu, c._appwell);
+              }
+              if (this._activeWindowPreview) {
+                const previewMenu = this._activeWindowPreview.menu;
+                this._activeWindowPreview = null;
+                previewMenu.close();
+              }
               c._appwell?._windowPreviewMenu?.close();
+            } else if (this._activeAppMenu?.appIcon === c._appwell) {
+              this._clearActiveAppMenu();
             }
+            // Context menus match preview behavior: retain source zoom while open,
+            // nonmodal input lets other icons zoom on hover without forcing a selection.
+            this._beginAnimation();
             if (open && this.autohider?._enabled) this.autohider.show();
             this.autohider?._debounceCheckHide();
           };
@@ -1881,10 +1909,10 @@ export let Dock = GObject.registerClass(
     }
 
     _endAnimation() {
-      // Browsing previews keeps the current zoom without an animation loop.
+      // Browsing a popup keeps the current zoom without an animation loop.
       // Keep the movement-only pointer watch so leaving can settle it again.
       if (!this._destroyed && !this._hidden && !this._dragging &&
-          this._activeWindowPreview?.menu.isOpen &&
+          (this._activeWindowPreview?.menu.isOpen || this._activeAppMenu?.menu.isOpen) &&
           this.extension.animate_icons_unmute !== false &&
           (!this._monitor?.inFullscreen || this.extension._inOverview)) {
         this._settleAnimation();
@@ -2036,14 +2064,89 @@ export let Dock = GObject.registerClass(
       ].some(actor => actor?._menu?.isOpen || actor?._windowPreviewMenu?.isOpen));
     }
 
-    _getWindowPreviewIcon(pointer) {
-      const state = this._activeWindowPreview;
+    _watchAppMenuInput(menu, appIcon) {
+      this._releaseAppMenuInput();
+      const connections = [];
+      const onCapturedEvent = (_stage, event) => {
+        if (!menu.isOpen) return Clutter.EVENT_PROPAGATE;
+        const type = event.type();
+        if (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN) {
+          const target = global.stage.get_event_actor?.(event) ?? event.get_source?.();
+          const owner = this._icons?.find(icon => (icon._appwell ?? icon.child) === appIcon);
+          let inside = (menu.actor && (menu.actor === target || !!menu.actor.contains?.(target))) ||
+                       (appIcon && (appIcon === target || !!appIcon.contains?.(target))) ||
+                       (owner && (owner === target || !!owner.contains?.(target)));
+          if (!target) {
+            const [x, y] = event.get_coords();
+            const panel = actorRect(menu.actor);
+            const source = owner?._inputRect ?? actorRect(appIcon);
+            inside = (panel && isInRect(panel, [x, y])) || (source && isInRect(source, [x, y]));
+          }
+          if (!inside) {
+            menu.close();
+          }
+        } else if (type === Clutter.EventType.KEY_PRESS) {
+          if (event.get_key_symbol() === Clutter.KEY_Escape) {
+            const focus = global.stage.get_key_focus?.();
+            const ownsFocus = (menu.actor && (menu.actor === focus || !!menu.actor.contains?.(focus))) ||
+                              (appIcon && (appIcon === focus || !!appIcon.contains?.(focus)));
+            menu.close();
+            return ownsFocus ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+          }
+        } else if ([Clutter.EventType.MOTION, Clutter.EventType.ENTER, Clutter.EventType.LEAVE].includes(type)) {
+          this._beginAnimation();
+        }
+        return Clutter.EVENT_PROPAGATE;
+      };
+
+      if (SHELL_HAS_INPUT_REGION && typeof Meta !== "undefined" && !Meta.is_wayland_compositor?.() &&
+          Main.layoutManager.trackChrome && Main.layoutManager.untrackChrome && menu.actor) {
+        try {
+          Main.layoutManager.trackChrome(menu.actor, {
+            affectsInputRegion: true, affectsStruts: false, trackFullscreen: false,
+          });
+          this._appMenuInputTracked = true;
+          this._appMenuTrackedActor = menu.actor;
+        } catch {}
+      }
+
+      if (global.stage?.connect) {
+        connections.push([global.stage, global.stage.connect('captured-event', onCapturedEvent)]);
+      }
+      this._appMenuInputConnections = connections;
+    }
+
+    _releaseAppMenuInput() {
+      if (this._appMenuInputConnections) {
+        for (const [obj, id] of this._appMenuInputConnections.splice(0)) {
+          try { obj.disconnect(id); } catch {}
+        }
+      }
+      this._appMenuInputConnections = null;
+      if (this._appMenuInputTracked) {
+        this._appMenuInputTracked = false;
+        if (this._appMenuTrackedActor) {
+          try { Main.layoutManager.untrackChrome(this._appMenuTrackedActor); } catch {}
+        }
+      }
+      this._appMenuTrackedActor = null;
+    }
+
+    _clearActiveAppMenu(state = this._activeAppMenu) {
+      if (this._activeAppMenu === state) {
+        this._releaseAppMenuInput();
+        this._activeAppMenu = null;
+      }
+    }
+
+    // ponytail: stage captured-event handles nonmodal context menus without custom subclasses; upgrade to custom AppMenu subclass if native submenus require custom styling.
+    _getPopupOwnerIcon(state, pointer, dismissCb) {
       if (!state?.menu.isOpen) {
-        this._activeWindowPreview = null;
+        dismissCb?.();
         return null;
       }
       const dismiss = () => {
-        if (this._activeWindowPreview === state) this._activeWindowPreview = null;
+        dismissCb?.();
         state.menu.close();
       };
       if (this._destroyed || !this.dash || this.dash._d2dlDestroying ||
@@ -2062,16 +2165,20 @@ export let Dock = GObject.registerClass(
         dismiss();
         return null;
       }
-      const moved = pointer[0] !== state.initialPointer[0] || pointer[1] !== state.initialPointer[1];
-      // Real hover on another icon always wins over the preview's retained zoom.
+      if (!pointer) {
+        return this.extension.animate_icons_unmute !== false ? owner : null;
+      }
+      const initial = state.initialPointer ?? pointer;
+      const moved = pointer[0] !== initial[0] || pointer[1] !== initial[1];
+      // Real hover on another icon always wins over the popup's retained zoom.
       if (moved && icons.some(icon => icon !== owner && !icon._d2dlDestroying &&
           icon._inputRect && isInRect(icon._inputRect, pointer))) {
         dismiss();
         return null;
       }
-      let inside = !moved || isInRect(source, pointer, 4) ||
-        state.menu.containsPoint(pointer[0], pointer[1]);
       const panel = actorRect(state.menu.actor);
+      let inside = !moved || isInRect(source, pointer, 4) ||
+        (state.menu.containsPoint ? state.menu.containsPoint(pointer[0], pointer[1]) : (panel && isInRect(panel, pointer)));
       if (!inside && panel) {
         // Connect the icon to its popup across the small normal-axis gap.
         // A tall popup must not make every neighboring dock icon part of it.
@@ -2091,6 +2198,22 @@ export let Dock = GObject.registerClass(
       }
       if (!inside) dismiss();
       return inside && this.extension.animate_icons_unmute !== false ? owner : null;
+    }
+
+    _getWindowPreviewIcon(pointer) {
+      return this._getPopupOwnerIcon(
+        this._activeWindowPreview,
+        pointer,
+        () => { this._activeWindowPreview = null; }
+      );
+    }
+
+    _getAppMenuIcon(pointer) {
+      return this._getPopupOwnerIcon(
+        this._activeAppMenu,
+        pointer,
+        () => this._clearActiveAppMenu()
+      );
     }
 
     _openWindowPreviewMenu(appIcon, side) {
@@ -2120,6 +2243,11 @@ export let Dock = GObject.registerClass(
                   menu, appIcon, initialPointer: global.get_pointer().slice(0, 2),
                 };
                 if (previous && previous.menu !== menu) previous.menu.close();
+                if (this._activeAppMenu) {
+                  const activeMenu = this._activeAppMenu.menu;
+                  this._clearActiveAppMenu();
+                  activeMenu.close();
+                }
               } else if (this._activeWindowPreview?.menu === menu) {
                 this._activeWindowPreview = null;
               }

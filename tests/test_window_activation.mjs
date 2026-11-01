@@ -9,6 +9,10 @@ const Clutter = {
   BUTTON_PRIMARY: 1, BUTTON_MIDDLE: 2, BUTTON_SECONDARY: 3,
   ScrollDirection: {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3},
   ModifierType: {CONTROL_MASK: 1 << 2, SHIFT_MASK: 1, BUTTON2_MASK: 1 << 9},
+  EventType: {BUTTON_PRESS: 4, KEY_PRESS: 8, MOTION: 12, ENTER: 16, LEAVE: 17, TOUCH_BEGIN: 20},
+  KEY_Escape: 0xff1b,
+  EVENT_PROPAGATE: false,
+  EVENT_STOP: true,
   get_current_event: () => currentEvent,
 };
 let currentEvent = null;
@@ -63,8 +67,11 @@ class WindowPreviewMenu {
   destroy() { this.close(); this.destroyed = true; }
   select(window) { this.close(); this.options.onActivate(window); }
 }
+const stageListeners = new Map();
+let keyFocus = null;
 const dependencies = {
   Main, Shell, Clutter, WindowPreviewMenu,
+  Meta: {is_wayland_compositor: () => true},
   isInRect: ([x, y, width, height], [px, py], margin = 0) =>
     px >= x - margin && px < x + width + margin &&
     py >= y - margin && py < y + height + margin,
@@ -77,6 +84,18 @@ const dependencies = {
     workspace_manager: {get_active_workspace: () => activeWorkspace},
     get_current_time: () => 1234,
     get_pointer: () => [...pointer],
+    stage: {
+      connect(signal, cb) {
+        const id = stageListeners.size + 1;
+        stageListeners.set(id, {signal, cb});
+        return id;
+      },
+      disconnect(id) {
+        stageListeners.delete(id);
+      },
+      get_event_actor: (event) => event?._actor,
+      get_key_focus: () => keyFocus,
+    },
   },
 };
 const Dock = new Function(...Object.keys(dependencies), `${source}\nreturn Dock;`)(
@@ -99,8 +118,15 @@ function fixture(specs, options = {}) {
     // A dock edge is physical, so the menu must be corrected before opening.
     const physicalSide = options.rtl && ['left', 'right'].includes(requestedSide)
       ? ({left: 'right', right: 'left'})[requestedSide] : requestedSide;
+    const menuActor = {
+      visible: false,
+      get_transformed_position: () => [options.menuRect?.[0] ?? 150, options.menuRect?.[1] ?? 40],
+      get_transformed_size: () => [options.menuRect?.[2] ?? 240, options.menuRect?.[3] ?? 260],
+      contains: target => target === menuActor,
+    };
     const menu = {
       isOpen: false, _arrowSide: physicalSide,
+      actor: menuActor,
       _boxPointer: {
         _arrowSide: physicalSide, _userArrowSide: physicalSide,
         updateArrowSide(side) { this._arrowSide = side; pointerUpdates.push(['side', side]); },
@@ -110,7 +136,16 @@ function fixture(specs, options = {}) {
         menuOpenSnapshots.push({menu: this._arrowSide, arrow: this._boxPointer._arrowSide,
           requested: this._boxPointer._userArrowSide});
         this.isOpen = options.menuOpens !== false;
+        if (this.isOpen) menuActor.visible = true;
       },
+      close() {
+        if (!this.isOpen) return;
+        this.isOpen = false;
+        menuActor.visible = false;
+        const signal = options.customMenu ? 'open-state-changed' : 'menu-state-changed';
+        menuCallbacks.get(signal)?.(options.customMenu ? this : appwell, false);
+      },
+      destroy() { this.close(); this.destroyed = true; },
       connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
     };
     return menu;
@@ -174,6 +209,7 @@ function fixture(specs, options = {}) {
     visible: true,
     get_transformed_position: () => [100, 100],
     get_transformed_size: () => [32, 32],
+    contains: target => target === appwell,
     connectObject(signal, callback) { menuCallbacks.set(signal, callback); },
     popupMenu(side) {
       calls.push(['popup', side]);
@@ -426,6 +462,8 @@ for (const nativeMenu of ['legacy', 'property']) {
   // going through activate() or a dock redisplay first.
   directMenu.appwell.popupMenu();
   const popup = directMenu.appwell._menu;
+  assert.equal(directMenu.dock._getAppMenuIcon(), directMenu.icon,
+    `${nativeMenu}: keyboard/long-press popup also retains source zoom`);
   assert.equal(directMenu.dock._icons, cachedIcons, 'direct menu opening uses the existing icon cache');
   assert.deepEqual(directMenu.menuOpenSnapshots, [
     {menu: 'left', arrow: 'left', requested: 'left'},
@@ -743,6 +781,147 @@ assert.equal(idlePreview.icon._targetScale, 2, 'animation timeout keeps the prev
 assert.deepEqual(idleWatchStates, [], 'preview timeout retains pointer recovery for its next movement');
 assert.equal(idlePreview.dock._icons.includes(idlePreview.icon), true,
   'preview timeout keeps the active icon cache available for direct switching');
+
+// Native right-click menus use Shell's input grab and close policy, but their
+// source must retain the same magnification as the thumbnail chooser.
+for (const position of ['left', 'right', 'top', 'bottom']) {
+  for (const nativeMenu of ['legacy', 'property']) {
+    const context = fixture([{id: 'window'}], {position, nativeMenu});
+    context.click(Clutter.BUTTON_SECONDARY);
+    const popup = context.appwell._menu;
+    assert.equal(context.dock._getAppMenuIcon(), context.icon,
+      `${position}/${nativeMenu}: right-click retains its source icon`);
+    assert.equal(context.animationWakes.length, 1, 'menu opening wakes the zoom renderer');
+    pointer = [900, 700];
+    assert.equal(context.dock._getAppMenuIcon(), context.icon,
+      'moving through the native menu or a submenu keeps the source magnified');
+    assert.equal(popup.isOpen, true, 'zoom ownership does not change native menu dismissal');
+    context.dock._icons = null;
+    assert.equal(context.dock._getAppMenuIcon(), context.icon,
+      'redisplay invalidation can resolve the menu source from the native dash');
+    context.dock._icons = [context.icon];
+    context.icon._scale = 2;
+    context.icon._targetScale = 2;
+    let settles = 0;
+    const watchChanges = [];
+    context.dock._settleAnimation = () => settles++;
+    context.dock._syncPointerWatch = active => watchChanges.push(active);
+    context.dock._endAnimation();
+    assert.equal(settles, 1, 'a settled context menu suspends frame work');
+    assert.equal(context.icon._scale, 2, 'the animation timeout does not shrink a menu source');
+    assert.equal(context.icon._targetScale, 2, 'the held menu retains its magnification target');
+    assert.deepEqual(watchChanges, [], 'the held menu keeps movement-only pointer recovery');
+    popup.close();
+    assert.equal(context.dock._activeAppMenu, null, 'native close releases context-menu ownership');
+    assert.equal(context.animationWakes.length, 2, 'native close wakes normal hover settling');
+    assert.equal(context.dock._getAppMenuIcon(), null, 'a dismissed menu cannot keep its icon zoomed');
+    assert.deepEqual(ids(context, 'focus'), [], 'right-click browsing never activates a window');
+  }
+}
+
+const customZoom = fixture([], {custom: true, customMenu: true, position: 'left'});
+const customZoomPopup = customZoom.icon._menu;
+customZoomPopup.isOpen = true;
+customZoom.menuCallbacks.get('open-state-changed')(customZoomPopup, true);
+assert.equal(customZoom.dock._getAppMenuIcon(), customZoom.icon,
+  'eager custom-launcher menus retain their source zoom too');
+customZoom.dock._icons = null;
+customZoom.dock.dash._box.get_children = () => [];
+customZoom.dock._extraIcons = {get_children: () => [customZoom.icon]};
+assert.equal(customZoom.dock._getAppMenuIcon(), customZoom.icon,
+  'custom context-menu ownership survives extra-icon cache invalidation');
+customZoomPopup.close();
+assert.equal(customZoom.dock._getAppMenuIcon(), null, 'custom menu dismissal releases retained zoom');
+
+for (const [position, panelRect, transit, panelPoint, outsideTransit] of [
+  ['left', [150, 40, 240, 260], [140, 116], [350, 270], [140, 270]],
+  ['right', [-160, 40, 240, 260], [90, 116], [-140, 270], [90, 270]],
+  ['top', [40, 150, 260, 240], [116, 140], [270, 350], [270, 140]],
+  ['bottom', [40, -160, 260, 240], [116, 90], [270, -140], [270, 90]],
+]) {
+  const freelyHoveredMenu = fixture([{id: 'window'}], {position, nativeMenu: 'property'});
+  freelyHoveredMenu.click(Clutter.BUTTON_SECONDARY);
+  const popup = freelyHoveredMenu.appwell._menu;
+  popup.actor.get_transformed_position = () => [panelRect[0], panelRect[1]];
+  popup.actor.get_transformed_size = () => [panelRect[2], panelRect[3]];
+  assert.equal(freelyHoveredMenu.dock._getAppMenuIcon([116, 116]), freelyHoveredMenu.icon,
+    `${position}: source icon remains active while context menu is open`);
+  assert.equal(freelyHoveredMenu.dock._getAppMenuIcon(transit), freelyHoveredMenu.icon,
+    `${position}: crossing narrow source-to-menu gap retains zoom`);
+  assert.equal(freelyHoveredMenu.dock._getAppMenuIcon(panelPoint), freelyHoveredMenu.icon,
+    `${position}: browsing context menu keeps source active, including distant items`);
+  assert.equal(popup.isOpen, true);
+  assert.equal(freelyHoveredMenu.dock._getAppMenuIcon(outsideTransit), null,
+    `${position}: moving away from context menu dismisses it without selection`);
+  assert.equal(popup.isOpen, false, `${position}: leaving dismisses context menu`);
+  assert.equal(freelyHoveredMenu.dock._activeAppMenu == null, true,
+    `${position}: departure releases context menu ownership`);
+}
+
+const switchContextMenu = fixture([{id: 'window'}], {position: 'left', nativeMenu: 'property'});
+switchContextMenu.click(Clutter.BUTTON_SECONDARY);
+const sourceMenuPopup = switchContextMenu.appwell._menu;
+const otherIcon = {visible: true, _icon: {},
+  _inputRect: [100, 164, 32, 32],
+  get_transformed_position: () => [100, 164], get_transformed_size: () => [32, 32]};
+switchContextMenu.dock._icons.push(otherIcon);
+assert.equal(switchContextMenu.dock._getAppMenuIcon([116, 180]), null,
+  'hovering another app dismisses context menu immediately');
+assert.equal(sourceMenuPopup.isOpen, false, 'hovering another app closes context menu without requiring selection');
+
+const outsideClickContext = fixture([{id: 'window'}], {position: 'left', nativeMenu: 'property'});
+outsideClickContext.click(Clutter.BUTTON_SECONDARY);
+const outsidePopup = outsideClickContext.appwell._menu;
+assert.equal(outsidePopup.isOpen, true);
+const stageCb = [...stageListeners.values()].filter(l => l.signal === 'captured-event').at(-1)?.cb;
+assert.ok(stageCb, 'context menu attaches stage captured-event listener');
+const outsideEvent = {
+  type: () => Clutter.EventType.BUTTON_PRESS,
+  get_coords: () => [800, 800],
+  _actor: { contains: () => false },
+};
+const outsideResult = stageCb(null, outsideEvent);
+assert.equal(outsideResult, Clutter.EVENT_PROPAGATE, 'outside click propagates without being consumed');
+assert.equal(outsidePopup.isOpen, false, 'outside click closes context menu');
+
+const escContext = fixture([{id: 'window'}], {position: 'left', nativeMenu: 'property'});
+escContext.click(Clutter.BUTTON_SECONDARY);
+const escPopup = escContext.appwell._menu;
+assert.equal(escPopup.isOpen, true);
+const escStageCb = [...stageListeners.values()].filter(l => l.signal === 'captured-event').at(-1)?.cb;
+const escEvent = {
+  type: () => Clutter.EventType.KEY_PRESS,
+  get_key_symbol: () => Clutter.KEY_Escape,
+};
+const escResult = escStageCb(null, escEvent);
+assert.equal(escResult, Clutter.EVENT_PROPAGATE, 'Escape propagates and dismisses context menu');
+assert.equal(escPopup.isOpen, false, 'Escape closes context menu');
+
+for (const unavailable of ['hidden', 'fullscreen', 'dragging', 'destroyed', 'source-destroying', 'source-removed']) {
+  const context = fixture([{id: 'window'}], {nativeMenu: 'property'});
+  context.click(Clutter.BUTTON_SECONDARY);
+  const popup = context.appwell._menu;
+  if (unavailable === 'hidden') context.dock._hidden = true;
+  if (unavailable === 'fullscreen') context.dock._monitor.inFullscreen = true;
+  if (unavailable === 'dragging') context.dock._dragging = true;
+  if (unavailable === 'destroyed') context.dock._destroyed = true;
+  if (unavailable === 'source-destroying') context.icon._d2dlDestroying = true;
+  if (unavailable === 'source-removed') context.dock._icons = [];
+  assert.equal(context.dock._getAppMenuIcon(), null,
+    `${unavailable}: an unavailable menu source cannot retain zoom`);
+  assert.equal(context.dock._activeAppMenu, null, `${unavailable}: stale menu ownership is released`);
+  assert.equal(popup.isOpen, false, `${unavailable}: the orphaned context menu closes`);
+  assert.deepEqual(ids(context, 'focus'), [], 'menu cancellation never selects an application window');
+}
+
+const disabledContext = fixture([{id: 'window'}], {nativeMenu: 'property'});
+disabledContext.click(Clutter.BUTTON_SECONDARY);
+disabledContext.dock.extension.animate_icons_unmute = false;
+assert.equal(disabledContext.dock._getAppMenuIcon(), null, 'disabled magnification overrides an open app menu');
+assert.equal(disabledContext.appwell._menu.isOpen, true, 'disabling zoom keeps native menu actions available');
+disabledContext.dock._cleanupIcon(disabledContext.icon);
+assert.equal(disabledContext.dock._activeAppMenu, null, 'icon cleanup releases retained context-menu ownership');
+assert.equal(disabledContext.appwell._menu, null, 'icon cleanup detaches the native popup');
 
 const detachedWindow = fixture([{id: 'active', focused: true}, {id: 'gone', minimized: true}]);
 detachedWindow.click();
