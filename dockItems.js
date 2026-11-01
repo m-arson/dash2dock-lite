@@ -170,30 +170,32 @@ export const DockItemBadgeOverlay = GObject.registerClass(
   class DockItemBadgeOverlay extends DockItemOverlay {
     update(icon, data) {
       let renderer = this.renderer;
-      let { noticesCount, position, vertical, extension, scale } = data;
-
-      renderer.width = icon._icon.width;
-      renderer.height = icon._icon.height;
-      let canvasScale = renderer.width / renderer._canvas.width;
-      renderer._canvas.set_scale(canvasScale, canvasScale);
+      let { noticesCount, extension } = data;
 
       let options = extension.notification_badge_style_options;
       let notification_badge_style =
         options[extension.notification_badge_style];
       if (!notification_badge_style || notification_badge_style === 'default') {
-        notification_badge_style = 'dot';
+        notification_badge_style = 'none';
       }
       let notification_badge_color = extension.notification_badge_color;
 
-      renderer.translation_x = renderer.width / 1.5;
-      // renderer.translation_y = icon._icon.translation_y;
+      this.countBadge = notification_badge_style === 'count';
+      const renderedSize = icon._renderer?.width * icon._renderer?.scale_x;
+      renderer.width = this.countBadge && Number.isFinite(renderedSize) && renderedSize > 0
+        ? renderedSize : icon._icon.width;
+      renderer.height = renderer.width;
+      let canvasScale = renderer.width / renderer._canvas.width;
+      renderer._canvas.set_scale(canvasScale, canvasScale);
+      renderer.translation_x = this.countBadge ? 0 : renderer.width / 1.5;
+      renderer.translation_y = 0;
 
       renderer.set_state({
         count: noticesCount,
-        color: notification_badge_color || [1, 1, 1, 1],
+        color: notification_badge_color || [0.9, 0.1, 0.15, 1],
         style: notification_badge_style,
         size: extension.notification_badge_size || 0,
-        translate: [0, -0.85],
+        translate: this.countBadge ? [0, 0] : [0, -0.85],
       });
     }
   }

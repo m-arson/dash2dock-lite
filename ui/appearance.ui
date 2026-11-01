@@ -435,7 +435,7 @@
         <child>
           <object class="AdwActionRow">
             <property name="title" translatable="yes">Notification Badge Style</property>
-            <property name="subtitle" translatable="yes">Customize the notification badge style.</property>
+            <property name="subtitle" translatable="yes">Choose Count to show the number of GNOME notifications.</property>
             <property name="activatable-widget">notification-badge-style</property>
             <child>
               <object class="GtkDropDown" id="notification-badge-style">
@@ -764,6 +764,7 @@
       <item translatable="yes">Square</item>
       <item translatable="yes">Triangle</item>
       <item translatable="yes">Diamond</item>
+      <item translatable="yes">Count</item>
     </items>
   </object>
   <object class="GtkStringList" id="icon-effect-model">

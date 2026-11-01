@@ -384,44 +384,205 @@ test('indicator snapshots detect in-place changes and avoid equal-array repaint 
   assert.equal(repaints, 3);
 });
 
-test('default running indicators and notification badges paint visible shapes', () => {
+function indicatorFixture(OverlayName, options = {}) {
   const {DotCanvas} = loadModule('apps/dot.js', 'DotCanvas', actorDependencies);
-  const {DockItemDotsOverlay, DockItemBadgeOverlay} = loadModule(
+  const overlays = loadModule(
     'dockItems.js', 'DockItemDotsOverlay, DockItemBadgeOverlay', {
       ...actorDependencies, PopupMenu: {PopupMenu: class {}},
-      DashIcon: class {}, DashItemContainer: class {}, DockPosition: {BOTTOM: 'bottom'},
+      DashIcon: class {}, DashItemContainer: class {},
+      DockPosition: {BOTTOM: 'bottom', TOP: 'top', LEFT: 'left', RIGHT: 'right'},
     });
-  for (const [Overlay, expectedArcs] of [[DockItemDotsOverlay, 3], [DockItemBadgeOverlay, 1]]) {
-    const canvas = Object.create(DotCanvas.prototype);
-    Object.assign(canvas, {_padding: 8, _barHeight: 6, width: 96, state: {}});
-    canvas.set_scale = canvas.queue_repaint = () => {};
-    canvas.get_surface_size = () => [96, 96];
-    const renderer = {_canvas: canvas, set_state: state => canvas.set_state(state)};
-    const extension = {
-      running_indicator_style_options: ['default'], running_indicator_style: 0,
-      notification_badge_style_options: ['default'], notification_badge_style: 0,
-    };
-    const icon = {_icon: {width: 48}};
-    const dock = {_iconSizeScaledDown: 48, _monitor: {geometry_scale: 1}};
-    Overlay.prototype.update.call({renderer}, icon,
-      {appCount: 3, noticesCount: 3, position: 'bottom', vertical: false, extension, dock});
-    let arcs = 0;
-    let fills = 0;
-    const context = new Proxy({}, {get: (_, property) => {
-      if (property === 'arc') return () => arcs++;
-      if (property === 'fill') return () => fills++;
-      return () => {};
-    }});
-    const originalSetColor = actorDependencies.Drawing.set_color;
-    actorDependencies.Drawing.set_color = () => {};
-    try {
-      canvas._paint(context);
-    } finally {
-      actorDependencies.Drawing.set_color = originalSetColor;
-    }
-    assert.equal(arcs, expectedArcs);
-    assert.ok(fills > 0, 'default overlays must fill their visible shapes');
+  const canvas = Object.create(DotCanvas.prototype);
+  Object.assign(canvas, {_padding: 8, _barHeight: 6, width: 96, state: {}, repaints: 0});
+  canvas.set_scale = (x, y) => { canvas.scale_x = x; canvas.scale_y = y; };
+  canvas.queue_repaint = () => canvas.repaints++;
+  canvas.get_surface_size = () => [96, 96];
+  const renderer = {_canvas: canvas, set_state: state => canvas.set_state(state)};
+  const extension = {
+    running_indicator_style_options: ['default', 'dots', 'dot', 'dashes', 'dash'],
+    running_indicator_style: options.runningStyle ?? 0,
+    running_indicator_size: options.runningSize ?? 0,
+    notification_badge_style_options: ['none', 'dot'],
+    notification_badge_style: options.badgeStyle ?? 0,
+  };
+  const icon = {_icon: {width: 48, height: 48}};
+  const dock = {_iconSizeScaledDown: 48,
+    _monitor: {geometry_scale: options.monitorScale ?? 1}};
+  const position = options.position ?? 'bottom';
+  const overlay = {renderer};
+  const data = {
+    appCount: options.windows ?? 3, noticesCount: 3, position,
+    vertical: position === 'left' || position === 'right', extension, dock,
+  };
+  const update = () => overlays[OverlayName].prototype.update.call(overlay, icon, data);
+  update();
+  return {canvas, renderer, extension, update};
+}
+
+function paintIndicator(canvas) {
+  let matrix = [1, 0, 0, 1, 0, 0];
+  let lineWidth = 1;
+  let rectanglePaths = [];
+  const stack = [];
+  const painted = {arcs: [], rectangles: 0, strokedRectangles: [], fills: 0, clears: 0};
+  const methods = {
+    save() { stack.push({matrix: [...matrix], lineWidth}); },
+    restore() { ({matrix, lineWidth} = stack.pop()); },
+    setLineWidth(width) { lineWidth = width; },
+    translate(x, y) {
+      const [a, b, c, d, e, f] = matrix;
+      matrix = [a, b, c, d, e + a * x + c * y, f + b * x + d * y];
+    },
+    rotate(angle) {
+      const [a, b, c, d, e, f] = matrix;
+      const cosine = Math.cos(angle), sine = Math.sin(angle);
+      matrix = [a * cosine + c * sine, b * cosine + d * sine,
+        c * cosine - a * sine, d * cosine - b * sine, e, f];
+    },
+    arc(x, y, radius) {
+      const [a, b, c, d, e, f] = matrix;
+      painted.arcs.push({x: a * x + c * y + e, y: b * x + d * y + f, radius});
+    },
+    rectangle(x, y, width, height) {
+      painted.rectangles++;
+      const [a, b, c, d, e, f] = matrix;
+      rectanglePaths.push([[x, y], [x + width, y], [x, y + height], [x + width, y + height]]
+        .map(([px, py]) => [a * px + c * py + e, b * px + d * py + f]));
+    },
+    strokePreserve() {
+      // Cairo strokes straddle the rectangle path. Include both half-strokes
+      // so the test measures visible thickness rather than only fill height.
+      for (const corners of rectanglePaths) {
+        painted.strokedRectangles.push({
+          left: Math.min(...corners.map(point => point[0])) - lineWidth / 2,
+          right: Math.max(...corners.map(point => point[0])) + lineWidth / 2,
+          top: Math.min(...corners.map(point => point[1])) - lineWidth / 2,
+          bottom: Math.max(...corners.map(point => point[1])) + lineWidth / 2,
+        });
+      }
+    },
+    fill() { painted.fills++; rectanglePaths = []; },
+    paint() { painted.clears++; },
+  };
+  const context = new Proxy(methods, {get: (target, property) => target[property] ?? (() => {})});
+  const originalSetColor = actorDependencies.Drawing.set_color;
+  actorDependencies.Drawing.set_color = () => {};
+  try {
+    canvas._paint(context);
+  } finally {
+    actorDependencies.Drawing.set_color = originalSetColor;
   }
+  return painted;
+}
+
+test('default running indicators retain window counts and notification None draws no badge', () => {
+  const running = paintIndicator(indicatorFixture('DockItemDotsOverlay').canvas);
+  assert.equal(running.arcs.length, 3, 'default running style retains its window-count display');
+  assert.equal(running.fills, 1);
+  const none = indicatorFixture('DockItemBadgeOverlay');
+  assert.equal(none.canvas.state.style, 'none');
+  const hidden = paintIndicator(none.canvas);
+  assert.equal(hidden.clears, 1, 'a reused None surface clears old contents');
+  assert.equal(hidden.arcs.length, 0, 'None does not draw the old fallback notification dot');
+  assert.equal(hidden.rectangles, 0);
+  assert.equal(hidden.fills, 0, 'None does not fill any badge shape');
+  const invalid = indicatorFixture('DockItemBadgeOverlay', {badgeStyle: 99});
+  assert.equal(invalid.canvas.state.style, 'none', 'unknown badge styles fall back to None');
+  assert.equal(paintIndicator(invalid.canvas).fills, 0);
+  const enabled = paintIndicator(indicatorFixture('DockItemBadgeOverlay', {badgeStyle: 1}).canvas);
+  assert.equal(enabled.arcs.length, 1, 'enabling the notification dot still draws it');
+  assert.equal(enabled.fills, 1);
+});
+
+test('single-dot running style paints one circular marker at each outer dock edge', () => {
+  for (const [position, rotation] of [['bottom', 0], ['top', 180], ['left', 90], ['right', -90]]) {
+    for (const monitorScale of [1, 2]) {
+      for (const windows of [1, 3, 9]) {
+        const {canvas, renderer} = indicatorFixture('DockItemDotsOverlay',
+          {runningStyle: 2, position, monitorScale, windows});
+        assert.equal(canvas.state.rotate, rotation);
+        const painted = paintIndicator(canvas);
+        assert.equal(painted.arcs.length, 1,
+          `${position}: single-dot style draws one circle for ${windows} windows`);
+        assert.equal(painted.rectangles, 0, 'single-dot style cannot paint a square');
+        assert.equal(painted.fills, 1);
+        const circle = painted.arcs[0];
+        const x = circle.x * canvas.scale_x + (renderer.translation_x ?? 0);
+        const y = circle.y * canvas.scale_y + (renderer.translation_y ?? 0);
+        const size = 48 * monitorScale;
+        const horizontal = position === 'left' || position === 'right';
+        const normal = horizontal ? x : y;
+        const tangent = horizontal ? y : x;
+        const edge = position === 'left' || position === 'top' ? 0 : size;
+        assert.ok(Math.abs(normal - edge) <= circle.radius * canvas.scale_x,
+          `${position}: the marker touches the physical outer edge at scale ${monitorScale}`);
+        assert.ok(Math.abs(tangent - size / 2) < monitorScale,
+          `${position}: the marker stays centered along its icon edge`);
+      }
+    }
+  }
+});
+
+test('Small single-dash markers halve visible thickness while preserving their length at every dock edge', () => {
+  for (const position of ['bottom', 'top', 'left', 'right']) {
+    for (const monitorScale of [1, 2]) {
+      for (const windows of [1, 3, 9]) {
+        const dimensions = [];
+        for (const runningSize of [0, 1]) {
+          const {canvas, renderer} = indicatorFixture('DockItemDotsOverlay',
+            {runningStyle: 4, runningSize, position, monitorScale, windows});
+          assert.equal(canvas.state.style, 'dash');
+          assert.equal(canvas.state.size, runningSize);
+          const painted = paintIndicator(canvas);
+          assert.equal(painted.rectangles, 1,
+            `${position}: single Dash retains one marker for ${windows} windows`);
+          assert.equal(painted.strokedRectangles.length, 1);
+          assert.equal(painted.arcs.length, 0);
+          assert.equal(painted.fills, 1);
+          const bounds = painted.strokedRectangles[0];
+          const left = bounds.left * canvas.scale_x + (renderer.translation_x ?? 0);
+          const right = bounds.right * canvas.scale_x + (renderer.translation_x ?? 0);
+          const top = bounds.top * canvas.scale_y + (renderer.translation_y ?? 0);
+          const bottom = bounds.bottom * canvas.scale_y + (renderer.translation_y ?? 0);
+          const vertical = position === 'left' || position === 'right';
+          dimensions.push({thickness: vertical ? right - left : bottom - top,
+            length: vertical ? bottom - top : right - left});
+        }
+        const [normal, small] = dimensions;
+        assert.ok(Math.abs(small.thickness - normal.thickness / 2) < 1e-8,
+          `${position} scale ${monitorScale}: Small halves the full visible thickness, including its stroke`);
+        assert.ok(Math.abs(small.length - normal.length) < 1e-8,
+          `${position} scale ${monitorScale}: Small preserves the marker's length`);
+        assert.ok(small.length > small.thickness, 'the thinner marker remains a line');
+      }
+    }
+  }
+});
+
+test('Small Dashes show one marker per window, up to four, at every dock edge', () => {
+  for (const position of ['bottom', 'top', 'left', 'right']) {
+    for (const monitorScale of [1, 2]) {
+      for (const windows of [1, 2, 3, 4, 7]) {
+        const {canvas} = indicatorFixture('DockItemDotsOverlay',
+          {runningStyle: 3, runningSize: 1, position, monitorScale, windows});
+        assert.equal(canvas.state.style, 'dashes');
+        assert.equal(canvas.state.count, windows);
+        const painted = paintIndicator(canvas);
+        assert.equal(painted.rectangles, Math.min(windows, 4),
+          `${position} scale ${monitorScale}: distinguish ${windows} windows`);
+      }
+    }
+  }
+});
+
+test('stable Small single-dash markers do not queue idle repaint work', () => {
+  const marker = indicatorFixture('DockItemDotsOverlay', {runningStyle: 4, windows: 3});
+  assert.equal(marker.canvas.repaints, 1);
+  marker.extension.running_indicator_size = 1;
+  marker.update();
+  assert.equal(marker.canvas.repaints, 2, 'changing thickness repaints the marker once');
+  for (let frame = 0; frame < 100; frame++) marker.update();
+  assert.equal(marker.canvas.repaints, 2, 'unchanged thin markers schedule no further Cairo repaints');
 });
 
 test('effect construction preserves shared parameters and supports both shader APIs', () => {

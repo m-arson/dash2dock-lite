@@ -780,7 +780,11 @@ export let Animator = class {
         ? dock.extension.services?._appNotices?.[icon._appwell.app.get_id()]
         : null;
       const noticesCount = appNotices?.count ?? 0;
-      if (icon._icon != dock._dragged && noticesCount > 0) {
+      if (
+        dock.extension.notification_badge_style > 0 &&
+        icon._icon != dock._dragged &&
+        noticesCount > 0
+      ) {
         const badge = this._getOverlay(this._badges, icon._idx, DockItemBadgeOverlay);
         icon._badge = badge;
         badge.update(icon, {
@@ -801,7 +805,10 @@ export let Animator = class {
         badge.x = icon._renderer.x;
         badge.y = icon._renderer.y;
 
-        badge.set_scale(icon._scale, icon._scale);
+        // Count badges already use the rendered icon size, including zoom and
+        // monitor scale. Applying the icon scale again would enlarge them twice.
+        const badgeScale = badge.countBadge ? 1 : icon._scale;
+        badge.set_scale(badgeScale, badgeScale);
         if (!badge.visible) badge.show();
       } else {
         this._badges[icon._idx]?.destroy();

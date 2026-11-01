@@ -2,6 +2,38 @@
 
 Extension versions refer to `metadata.json`. This fork's current behavior is documented in [README.md](README.md); older entries describe their releases and may have been superseded.
 
+## Version 116
+
+* Restore thumbnail previews on GNOME 51 using St's supported orientation property on GNOME 48 and newer, with the legacy property retained for older targets. The removed property caused previews to fail and fall back to the modal title-only menu, losing retained icon zoom and free browsing between icons.
+* Save **Dashes** rather than single **Dash** in the personal settings: one thin running marker per window, up to four, at the dock's outer edge. Preserve the Small thickness and separate notification badge.
+* Test preview construction across GNOME 42–51 API variants, thumbnail availability, dismissal without selection, first-click delivery to another icon, and multi-window dash counts at all four edges.
+
+## Version 115
+
+* Enlarge the **Small** circular notification count badge to 2.25 times its version 114 diameter. Keep centered numbers, circular geometry, and the thin running-window dash.
+
+## Version 114
+
+* Make dash thickness respect the size setting: **Small** is half the normal visible thickness, including its outline, while keeping the dash length.
+* Draw notification counts in a circle for all counts, fitting the white number inside it. **Small** uses one-third the diameter of version 113's Large badge; counts above 99 still show **99+**.
+* Save both size preferences as **Small** in the personal configuration.
+
+## Version 113
+
+* Use square corners for the red notification count badge. One digit uses a square; longer counts widen into a rectangle to keep the numbers readable.
+* Set the opened-window marker to a single short **Dash** in the saved personal settings. This preference applies immediately without reloading the extension.
+* Select **Large** for notification badges in the saved personal settings, and document reloading the GNOME session when an older running version still shows a small dot.
+
+## Version 112
+
+* Add **Count** notification badges: a circle with the notification number, widening for multiple digits and showing **99+** above 99. Keep badges at the icon's top-right through magnification and monitor scaling; zero notifications remove the badge.
+* Use red badges with white numbers in the saved personal settings, alongside the separate single circular running-window marker. Keep **None** and the existing notification shapes available.
+
+## Version 111
+
+* Honor **None** for notification badges: do not draw the top-right badge or allocate its drawing surface, and release an existing badge as soon as it is disabled.
+* Update the saved personal dock settings to use one circular running-window marker per app, on the dock's outer edge. Keep other running-marker styles available in preferences.
+
 ## Version 110
 
 * Fix GNOME 51 startup after removal of Shell's `ui/pointerWatcher.js`. Bundle pointer watching with the extension instead of importing that removed resource.

@@ -10,9 +10,13 @@ This personal fork is updated around my preferred dock configuration, saved in [
 
 ## Overview
 
-An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **110**. See the [changelog](CHANGELOG.md) for release details.
+An animated GNOME desktop dock with magnification, autohide, window previews, and all four screen-edge positions. Current extension version: **116**. See the [changelog](CHANGELOG.md) for release details.
 
 Version 110 fixes startup on GNOME 51, which removed the Shell pointer-watcher module used by earlier versions. Pointer watching is now bundled with the extension.
+
+Version 116 restores window thumbnails on GNOME 51 after removal of St widgets' old `vertical` property. The preview stays nonmodal: its source icon remains zoomed while browsing, and moving to another icon dismisses it without selecting a window. Earlier versions could hit the removed property and fall back to the native modal title-only menu.
+
+The saved personal settings use one thin running dash per window, up to four: left of the icon on a left dock, below it on a bottom dock, and correspondingly on the top or right edge for those positions. Choose **Running Indicator Style > Dashes** and **Running Indicator Size > Small** for window counts with half the normal dash thickness; the singular **Dash** style always shows one marker regardless of window count. A separate red circular notification badge sits at the icon's top-right, with centered white numbers for the app's notifications in GNOME's notification list. **Notification Badge Size > Small** is 2.25 times its version 114 diameter (three-quarters of Large), making the count easier to read. The badge stays circular for multiple digits; counts above 99 show **99+**, and zero notifications hide it. Choose **Notification Badge Style > Count** to enable it, or **None** to hide it.
 
 * Animated icons, running indicators, notification badges, and favorite reordering
 * Multi-monitor support, autohide/intellihide, and panel mode
@@ -29,7 +33,7 @@ Declared targets still require verification in the corresponding desktop session
 
 ### Tested setup
 
-Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**. GNOME 51 resource/API checks and native shader/drawing module imports pass; live desktop interaction still needs verification after loading version 110 in a fresh session.
+Desktop testing is limited to the maintainer's machine. It was upgraded from GNOME 48.7 to **GNOME 51.0 on October 24, 2026**, and the maintainer confirmed version 110 works there. Version 115's larger circular notification badge still needs visual verification after loading it in a fresh session.
 
 The screenshot and saved full desktop profile were captured earlier, on **October 22 with GNOME 48.7**. They remain a record of that setup, rather than a GNOME 51 configuration.
 
@@ -135,6 +139,8 @@ python3 tools/apply_update.py dash2dock-lite@icedman.github.com.zip \
 The helper backs up installed files, extension preferences, custom configuration, and relevant Shell settings. It validates the archive and verifies files and preserved preferences after installation, restoring the previous installation and preferences if the update fails. It prints the backup location and records the result in `manifest.json` there.
 
 An existing extension directory must not be a symlink, and its settings schema must match the archive. Schema changes require a reviewed migration. Log out and back in after a successful update to load the new code.
+
+If previews, dashes, or notification badges still have their old behavior, check the running version with `gnome-extensions info dash2dock-lite@icedman.github.com`. The current session can retain an older version even after installing version 116; disabling and re-enabling does not reliably reload changed modules. Log out and back in to load the updated code.
 
 ## Restore My Custom Settings
 

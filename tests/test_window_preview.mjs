@@ -158,6 +158,7 @@ const Main = {
 };
 const Clutter = {
   Clone, EVENT_PROPAGATE: 'propagate', EVENT_STOP: 'stop', ActorAlign: {CENTER: 'center'},
+  Orientation: {HORIZONTAL: 0, VERTICAL: 1},
   EventType: {KEY_PRESS: 'key', BUTTON_PRESS: 'press', TOUCH_BEGIN: 'touch',
     MOTION: 'motion', ENTER: 'enter', LEAVE: 'leave'},
   ModifierType: {LOCK_MASK: 1, MOD2_MASK: 2, MODIFIER_MASK: 255},
@@ -176,11 +177,28 @@ stage.focus = null;
 stage.get_key_focus = () => stage.focus;
 stage.get_event_actor = event => event.target;
 let wayland = false;
-const loadMenu = version => new Function('Main', 'Clutter', 'St', 'PopupMenu', 'BoxPointer',
-  'global', 'Pango', 'Config', 'Meta', `${source}\nreturn WindowPreviewMenu;`)(Main, Clutter, St,
-  {PopupMenu: Popup, PopupBaseMenuItem: Actor, PopupMenuManager: Manager},
-  {PopupAnimation: {FULL: 'full'}}, {stage}, Pango, {PACKAGE_VERSION: version},
-  {is_wayland_compositor: () => wayland});
+const loadMenu = version => {
+  const shellVersion = parseInt(version);
+  class BoxLayout extends Actor {
+    constructor(params) {
+      if (shellVersion >= 48) {
+        assert.equal(params.orientation, Clutter.Orientation.VERTICAL,
+          `GNOME ${version} preview rows use the orientation property`);
+        assert.equal('vertical' in params, false,
+          `GNOME ${version} preview rows avoid the removed vertical property`);
+      } else {
+        assert.equal(params.vertical, true, `GNOME ${version} retains legacy vertical rows`);
+        assert.equal('orientation' in params, false);
+      }
+      super(params);
+    }
+  }
+  return new Function('Main', 'Clutter', 'St', 'PopupMenu', 'BoxPointer',
+    'global', 'Pango', 'Config', 'Meta', `${source}\nreturn WindowPreviewMenu;`)(Main, Clutter,
+    {...St, BoxLayout}, {PopupMenu: Popup, PopupBaseMenuItem: Actor, PopupMenuManager: Manager},
+    {PopupAnimation: {FULL: 'full'}}, {stage}, Pango, {PACKAGE_VERSION: version},
+    {is_wayland_compositor: () => wayland});
+};
 const WindowPreviewMenu = loadMenu('49.0');
 const event = (type, target = null, key = null, coords = [0, 0], state = 0) => ({
   type: () => type, target, get_key_symbol: () => key, get_coords: () => coords,
@@ -375,13 +393,25 @@ assert.equal(captured(Clutter.EventType.KEY_PRESS, keyboard.icon, Clutter.KEY_Es
   Clutter.EVENT_STOP, 'Escape also cancels from the source button keyboard focus');
 keyboard.menu.destroy();
 
-for (const [version, isWayland] of [['50.0', false], ['51.0', true], ['49.0', true]]) {
+for (const [version, isWayland] of [['42.0', true], ['44.0', true], ['46.0', true],
+  ['47.0', true], ['48.0', true], ['49.0', true], ['50.0', false], ['51.0', true]]) {
   wayland = isWayland;
-  const modern = fixture([new Window(`${version}-${isWayland}`)], loadMenu(version));
-  modern.menu.popup();
+  const modern = fixture([new Window(`${version}-one`), new Window(`${version}-two`)], loadMenu(version));
+  stage.focus = applicationFocus;
+  assert.equal(modern.menu.popup(), true, `GNOME ${version} opens a multi-window preview`);
+  assert.equal(modern.menu._rows.size, 2);
+  assert.ok([...modern.menu._rows.values()].every(row => row.clone),
+    `GNOME ${version} retains compositor thumbnails`);
+  assert.equal(stage.focus, applicationFocus, 'opening previews preserves application focus');
   assert.equal(Main.layoutManager.tracked.size, 0,
     'GNOME 50+ and Wayland never receive removed X11 input-region options');
   assert.equal(stage.signals.size, 1, 'modern sessions retain nonmodal outside-click dismissal');
+  captured(Clutter.EventType.MOTION, modern.menu.actor, null, [30, 40]);
+  assert.deepEqual(modern.motions, [[30, 40]], 'preview movement still wakes retained icon zoom');
+  assert.equal(captured(Clutter.EventType.BUTTON_PRESS, new Actor()), Clutter.EVENT_PROPAGATE,
+    `GNOME ${version} passes the first click to another icon`);
+  assert.equal(modern.menu.isOpen, false);
+  assert.deepEqual(modern.selected, [], 'leaving previews never requires a window selection');
   modern.menu.destroy();
   assert.equal(stage.signals.size, 0);
 }

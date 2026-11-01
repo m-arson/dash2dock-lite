@@ -83,6 +83,7 @@ const extension = {
   _hiTimer: timer, _config: {}, animate_icons_unmute: true,
   animation_rise: 0.5, animation_magnify: 1, animation_spread: 0.5,
   animation_fps: 60, animation_bounce_height: 0.5, animation_bounce_frequency: 1,
+  notification_badge_style: 0,
   icon_quality: 1, services: {_appNotices: {}, updateIcon() {}},
   integrations: {bms_update_size() {}}, autohide_speed: 0.5,
 };
@@ -266,17 +267,56 @@ dock.getAppWindowsFiltered = () => windows;
 extension.services._appNotices.app = {count: 1};
 animator.animate(16);
 const dots = animator._dots[0];
+assert.ok(dots, 'running windows allocate their running marker');
+assert.equal(animator._badges[0], null,
+  'notification None does not allocate an extra surface for an app with notices');
+const noBadgeAllocations = Actor.allocations;
+for (let i = 0; i < 30; i++) animator.animate(16);
+assert.equal(Actor.allocations, noBadgeAllocations,
+  'disabled notification badges remain allocation-free on stable frames');
+extension.notification_badge_style = 1;
+animator.animate(16);
 const badge = animator._badges[0];
-assert.ok(dots && badge, 'visible content allocates indicator surfaces');
+assert.ok(badge, 'enabling notification badges allocates a surface for existing notices');
+assert.equal(animator._dots[0], dots, 'enabling a badge preserves the existing running marker');
 const allocations = Actor.allocations;
 for (let i = 0; i < 30; i++) animator.animate(16);
 assert.equal(Actor.allocations, allocations, 'stable indicators reuse their actors and canvases');
 assert.equal(dots.hides ?? 0, 0, 'running indicators do not hide and show every frame');
 assert.equal(badge.hides ?? 0, 0, 'notification badges do not hide and show every frame');
+extension.notification_badge_style = 0;
+animator.animate(16);
+assert.ok(badge.destroyed, 'switching to None releases an already visible notification surface');
+assert.equal(animator._badges[0], null);
+assert.equal(icon._badge, null, 'switching to None clears the icon reference to its old badge');
+assert.equal(animator._dots[0], dots, 'disabling notification badges retains the running marker');
+assert.equal(dots.destroyed, undefined, 'the independent running marker remains alive');
+const disabledAllocations = Actor.allocations;
+for (let i = 0; i < 30; i++) animator.animate(16);
+assert.equal(Actor.allocations, disabledAllocations, 'None cannot reallocate the disabled badge');
+extension.notification_badge_style = 1;
+animator.animate(16);
+const restoredBadge = animator._badges[0];
+assert.ok(restoredBadge && restoredBadge !== badge,
+  'reenabling notification badges creates a usable replacement surface');
+assert.equal(animator._dots[0], dots, 'reenabling notifications retains the running marker');
+extension.notification_badge_style = 6;
+restoredBadge.countBadge = true;
+const previousWithin = within;
+within = true;
+for (let i = 0; i < 30; i++) animator.animate(16);
+assert.ok(icon._scale > 1, 'exercise the notification count badge on a magnified icon');
+assert.equal(restoredBadge.scale_x, 1, 'count badges are not magnified a second time');
+assert.equal(restoredBadge.scale_y, 1);
+assert.equal(restoredBadge.width, icon._renderer.width * icon._renderer.scale_x,
+  'count badge bounds use the displayed icon size');
+assert.equal(restoredBadge.x, icon._renderer.x);
+assert.equal(restoredBadge.y, icon._renderer.y);
+within = previousWithin;
 windows = [];
 delete extension.services._appNotices.app;
 animator.animate(16);
-assert.ok(dots.destroyed && badge.destroyed, 'cleared indicators release their Cairo surfaces');
+assert.ok(dots.destroyed && restoredBadge.destroyed, 'cleared indicators release their Cairo surfaces');
 assert.equal(animator._dots[0], null);
 assert.equal(animator._badges[0], null);
 icon._appwell = null;

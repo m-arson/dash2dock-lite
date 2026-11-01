@@ -5,6 +5,8 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import Cairo from 'gi://cairo';
 import St from 'gi://St';
+import Pango from 'gi://Pango';
+import PangoCairo from 'gi://PangoCairo';
 
 import { Drawing } from '../drawing.js';
 
@@ -161,7 +163,9 @@ const DotCanvas = GObject.registerClass(
       let height = this.dot_size(this._barHeight + 2);
       let width = size - this._padding * 2;
 
-      let sz = width / 14;
+      // Include the one-pixel outline so Small halves the visible thickness.
+      const thicknessScale = [1, 0.5, 1.25][state.size] ?? 1;
+      let sz = Math.max(0, (width / 14 + 1) * thicknessScale - 1);
       let spacing = Math.ceil(width / 16); // separation between the dots
       let dashLength = Math.floor(width / 4) - spacing;
 
@@ -355,6 +359,60 @@ const DotCanvas = GObject.registerClass(
       ctx.strokePreserve();
       Drawing.set_color(ctx, state.color, state.color[3]);
       ctx.fill();
+    }
+
+    _draw_count(ctx, state) {
+      const count = Math.floor(Number(state.count));
+      if (!Number.isFinite(count) || count <= 0) return;
+
+      const [width, surfaceHeight] = this.get_surface_size();
+      const size = Math.min(width, surfaceHeight);
+      const factor = [1, (1.15 / 3) * 2.25, 1.15][state.size] ?? 1;
+      const diameter = size * 0.44 * factor;
+      const inset = size * 0.055;
+      const text = count > 99 ? '99+' : String(count);
+      // Keep every ink corner inside the circle, with room for pixel rounding.
+      const maxInkSize = Math.max(1, diameter * 0.7 - 1);
+      const layout = PangoCairo.create_layout(ctx);
+      const font = Pango.FontDescription.from_string('Sans Bold');
+      let fontSize = diameter * 0.85;
+      const measure = () => {
+        font.set_absolute_size(fontSize * Pango.SCALE);
+        layout.set_font_description(font);
+        PangoCairo.update_layout(ctx, layout);
+        return layout.get_pixel_extents()[0];
+      };
+      layout.set_text(text, -1);
+      let ink = measure();
+      const textScale = Math.min(
+        1,
+        maxInkSize / Math.max(1, ink.width),
+        maxInkSize / Math.max(1, ink.height)
+      );
+      if (textScale < 1) {
+        fontSize *= textScale;
+        ink = measure();
+      }
+
+      const radius = diameter / 2;
+      const centerX = width - inset - radius;
+      const centerY = inset + radius;
+      ctx.newSubPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      Drawing.set_color(ctx, state.color, state.color[3]);
+      ctx.fill();
+
+      // Keep text legible if the badge color is customized after installation.
+      const brightness = state.color[0] * 0.2126 +
+        state.color[1] * 0.7152 + state.color[2] * 0.0722;
+      const foreground = brightness > 0.65 ? [0.1, 0.1, 0.1, 1] : [1, 1, 1, 1];
+      ctx.setOperator(Cairo.Operator.OVER);
+      Drawing.set_color(ctx, foreground);
+      ctx.moveTo(
+        centerX - ink.x - ink.width / 2,
+        centerY - ink.y - ink.height / 2
+      );
+      PangoCairo.show_layout(ctx, layout);
     }
 
     _draw_dot(ctx, state) {

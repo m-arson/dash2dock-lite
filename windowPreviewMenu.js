@@ -11,7 +11,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
 const animation = () => BoxPointer.PopupAnimation?.FULL ?? true;
-const hasInputRegion = parseInt(Config.PACKAGE_VERSION.split('.')[0]) < 50;
+const shellVersion = parseInt(Config.PACKAGE_VERSION.split('.')[0]);
+const hasInputRegion = shellVersion < 50;
 
 const actorContains = (actor, target) => !!actor && !!target &&
   (actor === target || !!actor.contains?.(target));
@@ -262,7 +263,9 @@ export const WindowPreviewMenu = class extends PopupMenu.PopupMenu {
   _createRow(window) {
     const item = new PopupMenu.PopupBaseMenuItem({style_class: 'd2dl-window-preview-item'});
     const content = new St.BoxLayout({
-      vertical: true,
+      ...(shellVersion >= 48
+        ? {orientation: Clutter.Orientation.VERTICAL}
+        : {vertical: true}),
       style_class: 'd2dl-window-preview-content',
       x_expand: true,
     });

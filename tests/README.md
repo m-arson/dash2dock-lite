@@ -16,12 +16,12 @@ The tests exercise production code with small Shell UI fakes, plus real GLib tim
 
 | Area | Regression coverage |
 | --- | --- |
-| Animation and layout | Finite geometry, zoom/bounce settling, stable layout reuse, idle subscription removal, and indicator allocation/release. |
+| Animation and layout | Finite geometry, zoom/bounce settling, stable layout reuse, idle subscription removal, indicator allocation/release, disabled notification badges, circular numbered badge rendering/placement and size ratios, single and per-window running markers at each dock edge, and half-width Small dashes. |
 | Input and dragging | Magnified native hit bounds at every edge, scaled parents/pivots, X11 tracking, drag transform restoration, missed exits after click grabs, pointer-watch cleanup, favorite insertion/races, and empty native Dash drops. |
 | Pointer watching | Bundled helper loading without Shell's removed pointer-watcher resource, coalesced cursor notifications, movement-only delivery, idle-aware fallback, and final-watch signal/timer/pending-work cleanup. |
 | Context-menu placement | Inward opening at every dock edge, actual icon-button anchoring, and refreshed geometry for reused menus after position changes, including right-to-left layouts. |
 | App activation | Single-window minimizing, recent-window selection, restoring one minimized window, Show Desktop/stale-focus recovery, monitor/workspace filtering, and native modifier/custom-launcher fallbacks. |
-| Window previews | Proportional compositor clones, minimized-window preservation, unavailable-surface fallback, selecting one window, bounded scrolling, keyboard visibility, title/window changes, no modal manager, first-click delivery to outside targets, Escape/source dismissal, and releasing clones/input/window signals on close or destruction. |
+| Window previews | GNOME 42–51 orientation API variants, proportional compositor clones, minimized-window preservation, unavailable-surface fallback, selecting one window, bounded scrolling, keyboard visibility, title/window changes, no modal manager, first-click delivery to outside targets, Escape/source dismissal, and releasing clones/input/window signals on close or destruction. |
 | Preview hover | Retained source zoom over tall previews and narrow gaps at all edges, other-icon priority, dismissing without activation, hidden/fullscreen/drag overrides, movement-only wakeups, and settling without a continuous animation timer. |
 | Scrolling | Direction, thresholds, cooldown, monitor/workspace selection, and restoring only the selected window. |
 | Autohide | Window tracking and hidden-footprint containment; edge, pressure, open-menu, overview, and window-dodge behavior at four edges and on offset/scaled monitors. |

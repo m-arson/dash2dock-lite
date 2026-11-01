@@ -367,8 +367,8 @@ export const SettingsKeys = () => {
     'notification-badge-style': {
       default_value: 0,
       widget_type: 'dropdown',
-      options: ['default', 'dot', 'dash', 'square', 'triangle', 'diamond'],
-      test: { values: [0, 1, 2, 3, 4, 5] },
+      options: ['none', 'dot', 'dash', 'square', 'triangle', 'diamond', 'count'],
+      test: { values: [0, 1, 2, 3, 4, 5, 6] },
     },
     'notification-badge-color': {
       default_value: [1, 1, 1, 1],
